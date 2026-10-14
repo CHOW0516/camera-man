@@ -28,7 +28,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,6 +44,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.pose.PoseDetection
+import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.text.SimpleDateFormat
 import java.util.concurrent.Executors
 import java.util.Locale
@@ -56,6 +60,9 @@ fun CameraScreen() {
     var frameReading by remember { mutableStateOf<FrameReading?>(null) }
     var scanSession by remember { mutableStateOf<ScanSession?>(null) }
     var bestHeading by remember { mutableStateOf<Float?>(null) }
+    var poseMode by remember { mutableStateOf(false) }
+    var poseIndex by remember { mutableIntStateOf(0) }
+    var sceneAnalyzer by remember { mutableStateOf<SceneAnalyzer?>(null) }
     val heading = rememberHeadingDegrees(enabled = scanSession != null)
 
     val previewView = remember { PreviewView(context) }
@@ -78,8 +85,13 @@ fun CameraScreen() {
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                 .build()
         )
+        val poseDetector = PoseDetection.getClient(
+            PoseDetectorOptions.Builder()
+                .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
+                .build()
+        )
         val mainExecutor = ContextCompat.getMainExecutor(context)
-        imageAnalysis.setAnalyzer(analysisExecutor, SceneAnalyzer(faceDetector) { reading ->
+        val analyzer = SceneAnalyzer(faceDetector, poseDetector) { reading ->
             mainExecutor.execute {
                 frameReading = reading
                 val session = scanSession
@@ -89,12 +101,20 @@ fun CameraScreen() {
                     bestHeading = session.bestHeading()
                 }
             }
-        })
+        }
+        imageAnalysis.setAnalyzer(analysisExecutor, analyzer)
+        sceneAnalyzer = analyzer
         onDispose {
             imageAnalysis.clearAnalyzer()
             faceDetector.close()
+            poseDetector.close()
             analysisExecutor.shutdown()
         }
+    }
+
+    LaunchedEffect(sceneAnalyzer, poseMode) {
+        sceneAnalyzer?.usePoseDetection = poseMode
+        frameReading = null
     }
 
     // Rebind the camera whenever the user switches between front and back.
@@ -126,7 +146,15 @@ fun CameraScreen() {
         if (showGrid) GridOverlay(modifier = Modifier.fillMaxSize())
         LevelIndicator(modifier = Modifier.fillMaxSize())
         val session = scanSession
-        if (session == null) {
+        if (poseMode) {
+            PoseOverlay(
+                reading = frameReading,
+                isFrontCamera = useFrontCamera,
+                targetPose = poseLibrary[poseIndex],
+                onNextPose = { poseIndex = (poseIndex + 1) % poseLibrary.size },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (session == null) {
             CoachOverlay(reading = frameReading, isFrontCamera = useFrontCamera, modifier = Modifier.fillMaxSize())
         } else {
             ScanOverlay(
@@ -156,6 +184,7 @@ fun CameraScreen() {
             TextButton(onClick = {
                 // Scan looks at the scene, so it always uses the back camera.
                 useFrontCamera = false
+                poseMode = false
                 bestHeading = null
                 scanSession = ScanSession()
             }) {
@@ -169,6 +198,13 @@ fun CameraScreen() {
                     .background(Color.White, CircleShape)
                     .clickable { takePhoto(context, imageCapture) }
             )
+            TextButton(onClick = {
+                poseMode = !poseMode
+                scanSession = null
+                bestHeading = null
+            }) {
+                Text(if (poseMode) "Pose on" else "Pose", color = Color.White)
+            }
             TextButton(onClick = { useFrontCamera = !useFrontCamera }) {
                 Text(if (useFrontCamera) "Front" else "Back", color = Color.White)
             }

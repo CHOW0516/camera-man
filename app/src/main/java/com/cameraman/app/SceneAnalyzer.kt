@@ -1,11 +1,13 @@
 package com.cameraman.app
 
 import android.annotation.SuppressLint
+import android.graphics.PointF
 import android.graphics.RectF
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.pose.PoseDetector
 import kotlin.math.abs
 
 private const val GRID_COLUMNS = 48
@@ -24,17 +26,28 @@ data class FrameReading(
     val faceLeftBrightness: Float?,
     val faceRightBrightness: Float?,
     val clutter: Float,
-    val imageAspectRatio: Float
+    val imageAspectRatio: Float,
+    /** Body joints found by pose detection; null when pose mode is off or nobody was found. */
+    val bodyPoints: Map<Joint, PointF>? = null
 )
 
+/** A joint must be at least this likely to be in the frame to be used. */
+private const val MIN_JOINT_LIKELIHOOD = 0.5f
+
 /**
- * Measures brightness on a small grid of the frame and finds the largest face with ML Kit.
+ * Measures brightness on a small grid of the frame, then finds the largest face with ML Kit,
+ * or the body's joints when [usePoseDetection] is on.
  * Runs on a background thread; [onReading] is called once per analyzed frame.
  */
 class SceneAnalyzer(
     private val faceDetector: FaceDetector,
+    private val poseDetector: PoseDetector,
     private val onReading: (FrameReading) -> Unit
 ) : ImageAnalysis.Analyzer {
+
+    /** Set from the main thread when the user turns pose mode on or off. */
+    @Volatile
+    var usePoseDetection = false
 
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
@@ -49,35 +62,58 @@ class SceneAnalyzer(
         val uprightWidth = if (isSideways) imageProxy.height else imageProxy.width
         val uprightHeight = if (isSideways) imageProxy.width else imageProxy.height
 
-        faceDetector.process(InputImage.fromMediaImage(mediaImage, rotationDegrees))
-            .addOnSuccessListener { faces ->
-                val largestFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                val faceBox = largestFace?.boundingBox?.let { box ->
-                    RectF(
-                        box.left.toFloat() / uprightWidth,
-                        box.top.toFloat() / uprightHeight,
-                        box.right.toFloat() / uprightWidth,
-                        box.bottom.toFloat() / uprightHeight
-                    )
-                }
-                onReading(
-                    FrameReading(
-                        frameBrightness = lumaGrid.averageBrightness(),
-                        highlightFraction = lumaGrid.fractionAtOrAbove(HIGHLIGHT_LEVEL),
-                        faceBox = faceBox,
-                        faceBrightness = faceBox?.let { lumaGrid.averageBrightness(it) },
-                        faceLeftBrightness = faceBox?.let {
-                            lumaGrid.averageBrightness(RectF(it.left, it.top, it.centerX(), it.bottom))
-                        },
-                        faceRightBrightness = faceBox?.let {
-                            lumaGrid.averageBrightness(RectF(it.centerX(), it.top, it.right, it.bottom))
-                        },
-                        clutter = lumaGrid.edgeStrength(),
-                        imageAspectRatio = uprightWidth.toFloat() / uprightHeight
-                    )
+        val inputImage = InputImage.fromMediaImage(mediaImage, rotationDegrees)
+
+        fun report(faceBox: RectF?, bodyPoints: Map<Joint, PointF>?) {
+            onReading(
+                FrameReading(
+                    frameBrightness = lumaGrid.averageBrightness(),
+                    highlightFraction = lumaGrid.fractionAtOrAbove(HIGHLIGHT_LEVEL),
+                    faceBox = faceBox,
+                    faceBrightness = faceBox?.let { lumaGrid.averageBrightness(it) },
+                    faceLeftBrightness = faceBox?.let {
+                        lumaGrid.averageBrightness(RectF(it.left, it.top, it.centerX(), it.bottom))
+                    },
+                    faceRightBrightness = faceBox?.let {
+                        lumaGrid.averageBrightness(RectF(it.centerX(), it.top, it.right, it.bottom))
+                    },
+                    clutter = lumaGrid.edgeStrength(),
+                    imageAspectRatio = uprightWidth.toFloat() / uprightHeight,
+                    bodyPoints = bodyPoints
                 )
-            }
-            .addOnCompleteListener { imageProxy.close() }
+            )
+        }
+
+        if (usePoseDetection) {
+            poseDetector.process(inputImage)
+                .addOnSuccessListener { pose ->
+                    val bodyPoints = Joint.entries.mapNotNull { joint ->
+                        val landmark = pose.getPoseLandmark(joint.mlKitType)
+                        if (landmark == null || landmark.inFrameLikelihood < MIN_JOINT_LIKELIHOOD) {
+                            null
+                        } else {
+                            joint to PointF(landmark.position.x / uprightWidth, landmark.position.y / uprightHeight)
+                        }
+                    }.toMap()
+                    report(faceBox = null, bodyPoints = bodyPoints.ifEmpty { null })
+                }
+                .addOnCompleteListener { imageProxy.close() }
+        } else {
+            faceDetector.process(inputImage)
+                .addOnSuccessListener { faces ->
+                    val largestFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                    val faceBox = largestFace?.boundingBox?.let { box ->
+                        RectF(
+                            box.left.toFloat() / uprightWidth,
+                            box.top.toFloat() / uprightHeight,
+                            box.right.toFloat() / uprightWidth,
+                            box.bottom.toFloat() / uprightHeight
+                        )
+                    }
+                    report(faceBox = faceBox, bodyPoints = null)
+                }
+                .addOnCompleteListener { imageProxy.close() }
+        }
     }
 
     /** Samples the Y (brightness) plane at evenly spaced points, in sensor orientation. */
