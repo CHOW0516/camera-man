@@ -9,6 +9,12 @@ An Android camera app with a free, on-device AI coach that suggests where to sta
 - Rule-of-thirds grid (toggle)
 - Level line that turns green when the phone is straight
 
+## Phase 2: live light and framing tips
+
+- Warns when the scene is too dark, backlit, or in harsh light
+- Finds the main face (ML Kit, on-device) and coaches framing: step closer, leave headroom, line the eyes up with a thirds point
+- One tip at a time in a banner at the top; it waits a few frames before changing so it does not flicker
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).
