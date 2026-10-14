@@ -18,9 +18,14 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** How many frames in a row a new tip must win before it replaces the shown one (stops flicker). */
 private const val FRAMES_BEFORE_TIP_CHANGE = 4
@@ -34,7 +39,10 @@ fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modif
             toScreenCoordinates(it, reading.imageAspectRatio, viewAspectRatio, isFrontCamera)
         }
         val newTip = reading?.let {
-            chooseTip(it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness)
+            // Mirroring swaps which half of the face is on the left of the screen.
+            val leftOnScreen = if (isFrontCamera) it.faceRightBrightness else it.faceLeftBrightness
+            val rightOnScreen = if (isFrontCamera) it.faceLeftBrightness else it.faceRightBrightness
+            chooseTip(it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness, leftOnScreen, rightOnScreen)
         }
         val tipStabilizer = remember { TipStabilizer() }
         val tip = tipStabilizer.update(newTip) ?: return@BoxWithConstraints
@@ -50,7 +58,23 @@ fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modif
                 )
             }
             tip.target?.let { target ->
-                drawCircle(Color.Green, radius = 10.dp.toPx(), center = Offset(target.x * size.width, target.y * size.height))
+                val targetPoint = Offset(target.x * size.width, target.y * size.height)
+                drawCircle(Color.Green, radius = 10.dp.toPx(), center = targetPoint)
+                if (faceOnScreen != null) {
+                    val facePoint = Offset(faceOnScreen.centerX() * size.width, faceOnScreen.centerY() * size.height)
+                    drawArrow(from = facePoint, to = targetPoint, color = Color.Green)
+                }
+            }
+            if (faceOnScreen != null && tip.lightSide != null) {
+                // Arrow beside the face pointing toward the light.
+                val faceCenter = Offset(faceOnScreen.centerX() * size.width, faceOnScreen.centerY() * size.height)
+                val reach = faceOnScreen.width() * size.width
+                val direction = if (tip.lightSide == Side.Right) 1f else -1f
+                drawArrow(
+                    from = faceCenter + Offset(direction * reach * 0.7f, 0f),
+                    to = faceCenter + Offset(direction * reach * 1.4f, 0f),
+                    color = Color.Yellow
+                )
             }
         }
 
@@ -69,6 +93,18 @@ fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modif
         ) {
             Text(tip.message, color = Color.White, fontSize = 16.sp)
         }
+    }
+}
+
+/** Draws a straight arrow with a small V-shaped head at [to]. */
+private fun DrawScope.drawArrow(from: Offset, to: Offset, color: Color) {
+    val strokeWidth = 4.dp.toPx()
+    drawLine(color, from, to, strokeWidth)
+    val angle = atan2(to.y - from.y, to.x - from.x)
+    val headLength = 16.dp.toPx()
+    for (wing in listOf(-0.5f, 0.5f)) {
+        val wingAngle = angle + PI.toFloat() + wing
+        drawLine(color, to, to + Offset(cos(wingAngle) * headLength, sin(wingAngle) * headLength), strokeWidth)
     }
 }
 
