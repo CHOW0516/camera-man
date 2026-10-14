@@ -21,6 +21,13 @@ An Android camera app with a free, on-device AI coach that suggests where to sta
 - Green arrow from the face to the target dot when reframing
 - **Scan**: hold the phone upright and turn in a full circle; the app scores each direction for light on the subject, backlight, blown-out highlights and background clutter, then points you to the best direction to shoot
 
+## Phase 4: pose mode
+
+- **Pose** button: shows a dashed box where the person should stand (on a thirds line) and a white outline of a target pose
+- Body pose detection (ML Kit, on-device) draws the person's skeleton and a live match score
+- Tips in order: stand in the box, feet in the photo, move left/right, come closer/step back, then which arm or leg to adjust
+- **Next pose** cycles through 8 starter poses (relaxed stand, hand on hip, walking step, wave, hand in hair, and more); add poses in `PoseLibrary.kt` by listing bone angles
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

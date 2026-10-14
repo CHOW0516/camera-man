@@ -109,7 +109,7 @@ private fun DrawScope.drawArrow(from: Offset, to: Offset, color: Color) {
 }
 
 /** Keeps showing the current tip until a different one has been chosen several frames in a row. */
-private class TipStabilizer {
+class TipStabilizer {
     private var shownTip: Tip? = null
     private var candidateMessage: String? = null
     private var candidateCount = 0
@@ -133,35 +133,4 @@ private class TipStabilizer {
         }
         return shownTip
     }
-}
-
-/**
- * Maps a box from upright image coordinates to screen coordinates (both 0..1).
- * The preview fills the screen and crops the image's overflow evenly on both sides.
- */
-private fun toScreenCoordinates(
-    imageBox: RectF,
-    imageAspectRatio: Float,
-    viewAspectRatio: Float,
-    isFrontCamera: Boolean
-): RectF {
-    // Visible part of the image, as a fraction of its width and height.
-    val visibleWidth = if (imageAspectRatio > viewAspectRatio) viewAspectRatio / imageAspectRatio else 1f
-    val visibleHeight = if (imageAspectRatio > viewAspectRatio) 1f else imageAspectRatio / viewAspectRatio
-    val cropLeft = (1f - visibleWidth) / 2
-    val cropTop = (1f - visibleHeight) / 2
-
-    var left = (imageBox.left - cropLeft) / visibleWidth
-    var right = (imageBox.right - cropLeft) / visibleWidth
-    if (isFrontCamera) {
-        // The front preview is shown mirrored, like a selfie.
-        left = 1f - left
-        right = 1f - right
-    }
-    return RectF(
-        minOf(left, right),
-        (imageBox.top - cropTop) / visibleHeight,
-        maxOf(left, right),
-        (imageBox.bottom - cropTop) / visibleHeight
-    )
 }
