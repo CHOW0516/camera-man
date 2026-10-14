@@ -49,4 +49,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
+
+    // On-device face detection, model bundled in the app (works offline).
+    implementation("com.google.mlkit:face-detection:16.1.7")
 }

@@ -6,6 +6,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
@@ -39,7 +40,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.text.SimpleDateFormat
+import java.util.concurrent.Executors
 import java.util.Locale
 
 @Composable
@@ -49,12 +53,37 @@ fun CameraScreen() {
 
     var useFrontCamera by remember { mutableStateOf(false) }
     var showGrid by remember { mutableStateOf(true) }
+    var frameReading by remember { mutableStateOf<FrameReading?>(null) }
 
     val previewView = remember { PreviewView(context) }
+    val imageAnalysis = remember {
+        ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+    }
     val imageCapture = remember {
         ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .build()
+    }
+
+    // Frame analysis runs on its own thread; results are posted back to the main thread.
+    DisposableEffect(Unit) {
+        val analysisExecutor = Executors.newSingleThreadExecutor()
+        val faceDetector = FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .build()
+        )
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        imageAnalysis.setAnalyzer(analysisExecutor, SceneAnalyzer(faceDetector) { reading ->
+            mainExecutor.execute { frameReading = reading }
+        })
+        onDispose {
+            imageAnalysis.clearAnalyzer()
+            faceDetector.close()
+            analysisExecutor.shutdown()
+        }
     }
 
     // Rebind the camera whenever the user switches between front and back.
@@ -70,8 +99,9 @@ fun CameraScreen() {
             } else {
                 CameraSelector.DEFAULT_BACK_CAMERA
             }
+            frameReading = null
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture)
+            cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture, imageAnalysis)
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
@@ -84,6 +114,7 @@ fun CameraScreen() {
 
         if (showGrid) GridOverlay(modifier = Modifier.fillMaxSize())
         LevelIndicator(modifier = Modifier.fillMaxSize())
+        CoachOverlay(reading = frameReading, isFrontCamera = useFrontCamera, modifier = Modifier.fillMaxSize())
 
         Row(
             modifier = Modifier
