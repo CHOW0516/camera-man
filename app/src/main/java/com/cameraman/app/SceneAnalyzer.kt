@@ -6,6 +6,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetector
+import kotlin.math.abs
 
 private const val GRID_COLUMNS = 48
 private const val GRID_ROWS = 36
@@ -20,6 +21,9 @@ data class FrameReading(
     val highlightFraction: Float,
     val faceBox: RectF?,
     val faceBrightness: Float?,
+    val faceLeftBrightness: Float?,
+    val faceRightBrightness: Float?,
+    val clutter: Float,
     val imageAspectRatio: Float
 )
 
@@ -62,6 +66,13 @@ class SceneAnalyzer(
                         highlightFraction = lumaGrid.fractionAtOrAbove(HIGHLIGHT_LEVEL),
                         faceBox = faceBox,
                         faceBrightness = faceBox?.let { lumaGrid.averageBrightness(it) },
+                        faceLeftBrightness = faceBox?.let {
+                            lumaGrid.averageBrightness(RectF(it.left, it.top, it.centerX(), it.bottom))
+                        },
+                        faceRightBrightness = faceBox?.let {
+                            lumaGrid.averageBrightness(RectF(it.centerX(), it.top, it.right, it.bottom))
+                        },
+                        clutter = lumaGrid.edgeStrength(),
                         imageAspectRatio = uprightWidth.toFloat() / uprightHeight
                     )
                 )
@@ -123,6 +134,29 @@ class LumaGrid(val columns: Int, val rows: Int, private val values: IntArray) {
             for (column in firstColumn..lastColumn) {
                 total += valueAt(column, row)
                 count++
+            }
+        }
+        return total.toFloat() / count
+    }
+
+    /**
+     * Average brightness jump between neighboring cells. Plain walls and sky score low,
+     * busy backgrounds (shelves, crowds, leaves) score high.
+     */
+    fun edgeStrength(): Float {
+        var total = 0
+        var count = 0
+        for (row in 0 until rows) {
+            for (column in 0 until columns) {
+                val value = valueAt(column, row)
+                if (column + 1 < columns) {
+                    total += abs(value - valueAt(column + 1, row))
+                    count++
+                }
+                if (row + 1 < rows) {
+                    total += abs(value - valueAt(column, row + 1))
+                    count++
+                }
             }
         }
         return total.toFloat() / count

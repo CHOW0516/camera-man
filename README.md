@@ -15,6 +15,12 @@ An Android camera app with a free, on-device AI coach that suggests where to sta
 - Finds the main face (ML Kit, on-device) and coaches framing: step closer, leave headroom, line the eyes up with a thirds point
 - One tip at a time in a banner at the top; it waits a few frames before changing so it does not flicker
 
+## Phase 3: spot coach and scan mode
+
+- Side-light tip: when half the face is in shadow, a yellow arrow points toward the light
+- Green arrow from the face to the target dot when reframing
+- **Scan**: hold the phone upright and turn in a full circle; the app scores each direction for light on the subject, backlight, blown-out highlights and background clutter, then points you to the best direction to shoot
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

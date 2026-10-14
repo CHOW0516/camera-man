@@ -54,6 +54,9 @@ fun CameraScreen() {
     var useFrontCamera by remember { mutableStateOf(false) }
     var showGrid by remember { mutableStateOf(true) }
     var frameReading by remember { mutableStateOf<FrameReading?>(null) }
+    var scanSession by remember { mutableStateOf<ScanSession?>(null) }
+    var bestHeading by remember { mutableStateOf<Float?>(null) }
+    val heading = rememberHeadingDegrees(enabled = scanSession != null)
 
     val previewView = remember { PreviewView(context) }
     val imageAnalysis = remember {
@@ -77,7 +80,15 @@ fun CameraScreen() {
         )
         val mainExecutor = ContextCompat.getMainExecutor(context)
         imageAnalysis.setAnalyzer(analysisExecutor, SceneAnalyzer(faceDetector) { reading ->
-            mainExecutor.execute { frameReading = reading }
+            mainExecutor.execute {
+                frameReading = reading
+                val session = scanSession
+                val currentHeading = heading.value
+                if (session != null && bestHeading == null && currentHeading != null) {
+                    session.record(currentHeading, reading)
+                    bestHeading = session.bestHeading()
+                }
+            }
         })
         onDispose {
             imageAnalysis.clearAnalyzer()
@@ -114,7 +125,21 @@ fun CameraScreen() {
 
         if (showGrid) GridOverlay(modifier = Modifier.fillMaxSize())
         LevelIndicator(modifier = Modifier.fillMaxSize())
-        CoachOverlay(reading = frameReading, isFrontCamera = useFrontCamera, modifier = Modifier.fillMaxSize())
+        val session = scanSession
+        if (session == null) {
+            CoachOverlay(reading = frameReading, isFrontCamera = useFrontCamera, modifier = Modifier.fillMaxSize())
+        } else {
+            ScanOverlay(
+                session = session,
+                heading = heading.value,
+                bestHeading = bestHeading,
+                onClose = {
+                    scanSession = null
+                    bestHeading = null
+                },
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+        }
 
         Row(
             modifier = Modifier
@@ -127,6 +152,14 @@ fun CameraScreen() {
         ) {
             TextButton(onClick = { showGrid = !showGrid }) {
                 Text(if (showGrid) "Grid on" else "Grid off", color = Color.White)
+            }
+            TextButton(onClick = {
+                // Scan looks at the scene, so it always uses the back camera.
+                useFrontCamera = false
+                bestHeading = null
+                scanSession = ScanSession()
+            }) {
+                Text("Scan", color = Color.White)
             }
             Box(
                 modifier = Modifier
