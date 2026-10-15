@@ -32,6 +32,13 @@ An Android camera app with a free, on-device AI coach that suggests where to sta
 
 Tips are drawn, not written: a round icon badge at the top (red = light problem, dark = framing hint, green = ready), arrows on the face or standing box, corner arrows for closer (out) / back (in), a red limb on the pose outline, a match-score ring, a compass ring for scan, and a green screen frame plus a short buzz when the shot is ready. The **?** button lists what each icon means.
 
+## Filters and icon buttons
+
+- The bottom buttons are icons too: filters, grid, scan, shutter, pose, flip camera (yellow = on)
+- Filters: Original, Warm, Cool, Vivid, B&W, Fade, picked from a row of small sample circles; the viewfinder shows the filter live and the saved photo gets the same look
+- Coaching still reads the unfiltered camera image
+- A filtered photo is re-encoded, so it loses its EXIF data (time, camera info); unfiltered photos keep it
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).
