@@ -23,7 +23,7 @@ enum class Joint(val mlKitType: Int) {
     RightAnkle(PoseLandmark.RIGHT_ANKLE)
 }
 
-/** A body segment from [start] to [end] joint; [bodyPart] is how tips name it. */
+/** A body segment from [start] to [end] joint; bones with the same [bodyPart] light up together. */
 enum class Bone(val start: Joint, val end: Joint, val bodyPart: String) {
     LeftUpperArm(Joint.LeftShoulder, Joint.LeftElbow, "left arm"),
     LeftForearm(Joint.LeftElbow, Joint.LeftWrist, "left arm"),
