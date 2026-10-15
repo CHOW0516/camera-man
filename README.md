@@ -28,6 +28,10 @@ An Android camera app with a free, on-device AI coach that suggests where to sta
 - Tips in order: stand in the box, feet in the photo, move left/right, come closer/step back, then which arm or leg to adjust
 - **Next pose** cycles through 8 starter poses (relaxed stand, hand on hip, walking step, wave, hand in hair, and more); add poses in `PoseLibrary.kt` by listing bone angles
 
+## Visual tips
+
+Tips are drawn, not written: a round icon badge at the top (red = light problem, dark = framing hint, green = ready), arrows on the face or standing box, corner arrows for closer (out) / back (in), a red limb on the pose outline, a match-score ring, a compass ring for scan, and a green screen frame plus a short buzz when the shot is ready. The **?** button lists what each icon means.
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

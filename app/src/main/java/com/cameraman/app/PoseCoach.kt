@@ -67,15 +67,15 @@ fun choosePoseTip(
     match: PoseMatch?
 ): Tip {
     if (frameBrightness < TOO_DARK_BRIGHTNESS) {
-        return Tip("Too dark. Move to more light or face a window.", TipLevel.Warning)
+        return Tip(TipKind.TooDark)
     }
     if (joints == null || joints.size < MIN_JOINTS_FOR_PERSON || match == null) {
-        return Tip("Stand in the box so the whole body is visible.", TipLevel.Info)
+        return Tip(TipKind.StandInBox)
     }
     val leftAnkle = joints[Joint.LeftAnkle]
     val rightAnkle = joints[Joint.RightAnkle]
     if (leftAnkle == null && rightAnkle == null) {
-        return Tip("Step back so the feet are in the photo.", TipLevel.Info)
+        return Tip(TipKind.StepBack)
     }
 
     val hips = listOfNotNull(joints[Joint.LeftHip], joints[Joint.RightHip])
@@ -83,8 +83,7 @@ fun choosePoseTip(
         val hipCenterX = hips.map { it.x }.average().toFloat()
         val offCenter = (standBox.center.x - hipCenterX) / screenWidth
         if (abs(offCenter) > CENTER_TOLERANCE) {
-            val side = if (offCenter > 0) "right" else "left"
-            return Tip("Move to the $side, into the box.", TipLevel.Info)
+            return Tip(TipKind.MoveSideways, side = if (offCenter > 0) Side.Right else Side.Left)
         }
     }
 
@@ -94,12 +93,12 @@ fun choosePoseTip(
         // Nose-to-ankle covers about 90% of a person's height.
         val bodyHeight = (lowestFoot - head.y) / 0.9f
         val heightRatio = bodyHeight / standBox.height
-        if (heightRatio < MIN_HEIGHT_RATIO) return Tip("Come a little closer to the camera.", TipLevel.Info)
-        if (heightRatio > MAX_HEIGHT_RATIO) return Tip("Step back from the camera.", TipLevel.Info)
+        if (heightRatio < MIN_HEIGHT_RATIO) return Tip(TipKind.StepCloser)
+        if (heightRatio > MAX_HEIGHT_RATIO) return Tip(TipKind.StepBack)
     }
 
     if (match.score < GOOD_MATCH && match.worstBone != null) {
-        return Tip("Move your ${match.worstBone.bodyPart} to match the outline.", TipLevel.Info)
+        return Tip(TipKind.FixLimb, bone = match.worstBone)
     }
-    return Tip("Great pose! Take the shot.", TipLevel.Good)
+    return Tip(TipKind.LooksGood)
 }

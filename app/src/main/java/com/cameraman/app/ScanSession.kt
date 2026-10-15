@@ -5,7 +5,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import kotlin.math.max
 
-private const val DIRECTION_COUNT = 12
+const val DIRECTION_COUNT = 12
 private const val DEGREES_PER_DIRECTION = 360f / DIRECTION_COUNT
 private const val MIN_FRAMES_PER_DIRECTION = 3
 
@@ -67,7 +67,7 @@ class ScanSession {
         return bestDirection?.let { (it + 0.5f) * DEGREES_PER_DIRECTION }
     }
 
-    private fun isSeen(direction: Int) = frameCount[direction] >= MIN_FRAMES_PER_DIRECTION
+    fun isSeen(direction: Int) = frameCount[direction] >= MIN_FRAMES_PER_DIRECTION
 
     private fun average(totals: FloatArray, direction: Int) = totals[direction] / frameCount[direction]
 }

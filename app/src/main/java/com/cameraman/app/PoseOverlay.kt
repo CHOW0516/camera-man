@@ -2,13 +2,12 @@ package com.cameraman.app
 
 import android.graphics.PointF
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -18,13 +17,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 
 // Where the person should stand, as fractions of the screen: on a thirds line, feet near the bottom.
 private const val STAND_BOX_CENTER_X = 2f / 3
@@ -64,43 +64,85 @@ fun PoseOverlay(
         val match = personJoints?.let { matchPose(it, poseToMatch) }
         val newTip = reading?.let { choosePoseTip(it.frameBrightness, personJoints, standBox, screenWidth, match) }
         val tipStabilizer = remember { TipStabilizer() }
-        val tip = tipStabilizer.update(newTip)
+        val tip = tipStabilizer.update(newTip, hasReading = reading != null)
+        BuzzWhenGood(tip?.kind)
+        val limbToFix = tip?.bone?.bodyPart
 
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val boxColor = if (tip?.kind == TipKind.StandInBox) Color.White else Color.White.copy(alpha = 0.6f)
             drawRoundRect(
-                color = Color.White.copy(alpha = 0.6f),
+                color = boxColor,
                 topLeft = standBox.topLeft,
                 size = standBox.size,
                 cornerRadius = CornerRadius(16.dp.toPx()),
                 style = Stroke(width = 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 14f)))
             )
             drawSkeleton(targetJoints, Color.White.copy(alpha = 0.7f), strokeWidth = 6.dp.toPx(), headRadius = HEAD_RADIUS * standBox.height)
+            if (limbToFix != null) {
+                // The limb to fix glows red on the outline.
+                for (bone in Bone.entries.filter { it.bodyPart == limbToFix }) {
+                    val start = targetJoints[bone.start] ?: continue
+                    val end = targetJoints[bone.end] ?: continue
+                    drawLine(WarningRed, start, end, 9.dp.toPx(), cap = StrokeCap.Round)
+                }
+            }
             if (personJoints != null) {
-                val matchColor = if ((match?.score ?: 0f) >= GOOD_MATCH) Color.Green else Color(0xFFFFC107)
+                val matchColor = if ((match?.score ?: 0f) >= GOOD_MATCH) GoodGreen else Color(0xFFFFC107)
                 drawSkeleton(personJoints, matchColor, strokeWidth = 3.dp.toPx(), headRadius = null)
+            }
+            when (tip?.kind) {
+                TipKind.MoveSideways -> {
+                    // Big arrow on the far side of the box, pointing into it.
+                    val y = standBox.center.y
+                    val arrowLength = 64.dp.toPx()
+                    if (tip?.side == Side.Right) {
+                        drawArrow(Offset(standBox.left - arrowLength - 16.dp.toPx(), y), Offset(standBox.left - 16.dp.toPx(), y), Color.White, 8.dp.toPx())
+                    } else {
+                        drawArrow(Offset(standBox.right + arrowLength + 16.dp.toPx(), y), Offset(standBox.right + 16.dp.toPx(), y), Color.White, 8.dp.toPx())
+                    }
+                }
+                TipKind.StepCloser -> drawCornerArrows(standBox, pointInward = false)
+                TipKind.StepBack -> drawCornerArrows(standBox, pointInward = true)
+                TipKind.LooksGood -> drawSuccessFrame()
+                else -> Unit
             }
         }
 
-        val bannerColor = when (tip?.level) {
-            TipLevel.Warning -> Color(0xCCB3261E)
-            TipLevel.Good -> Color(0xCC1E7B34)
-            else -> Color(0x99000000)
-        }
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .statusBarsPadding()
-                .padding(16.dp)
-                .background(bannerColor, RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(top = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val scoreText = match?.let { " · ${(it.score * 100).roundToInt()}% match" } ?: ""
-            Text("${targetPose.name}$scoreText", color = Color.White, fontSize = 14.sp)
-            if (tip != null) Text(tip.message, color = Color.White, fontSize = 16.sp)
+            if (tip != null) TipBadge(kind = tip.kind)
+        }
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            ScoreRing(score = match?.score)
             TextButton(onClick = onNextPose) {
-                Text("Next pose", color = Color.White)
+                Text("›", color = Color.White, fontSize = 32.sp)
             }
+        }
+    }
+}
+
+/** A ring that fills up with the match score; green from 80%. Empty when nobody is found. */
+@Composable
+private fun ScoreRing(score: Float?) {
+    Canvas(modifier = Modifier.size(56.dp)) {
+        val stroke = 6.dp.toPx()
+        val ringSize = Size(size.width - stroke, size.height - stroke)
+        val topLeft = Offset(stroke / 2, stroke / 2)
+        drawArc(Color.Black.copy(alpha = 0.5f), 0f, 360f, useCenter = false, topLeft = topLeft, size = ringSize, style = Stroke(stroke))
+        if (score != null) {
+            val color = if (score >= GOOD_MATCH) GoodGreen else Color(0xFFFFC107)
+            drawArc(color, -90f, 360f * score, useCenter = false, topLeft = topLeft, size = ringSize, style = Stroke(stroke, cap = StrokeCap.Round))
         }
     }
 }
