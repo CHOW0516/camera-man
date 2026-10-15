@@ -4,11 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Build
 import android.provider.MediaStore
+import android.view.View
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -17,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,8 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -64,9 +65,14 @@ fun CameraScreen() {
     var poseMode by remember { mutableStateOf(false) }
     var poseIndex by remember { mutableIntStateOf(0) }
     var sceneAnalyzer by remember { mutableStateOf<SceneAnalyzer?>(null) }
+    var photoFilter by remember { mutableStateOf(PhotoFilter.Original) }
+    var showFilters by remember { mutableStateOf(false) }
     val heading = rememberHeadingDegrees(enabled = scanSession != null)
 
-    val previewView = remember { PreviewView(context) }
+    // TextureView mode (COMPATIBLE) is needed so the filter paint below reaches the camera image.
+    val previewView = remember {
+        PreviewView(context).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
+    }
     val imageAnalysis = remember {
         ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -111,6 +117,11 @@ fun CameraScreen() {
             poseDetector.close()
             analysisExecutor.shutdown()
         }
+    }
+
+    LaunchedEffect(photoFilter) {
+        val paint = photoFilter.layerPaint()
+        previewView.setLayerType(if (paint == null) View.LAYER_TYPE_NONE else View.LAYER_TYPE_HARDWARE, paint)
     }
 
     LaunchedEffect(sceneAnalyzer, poseMode) {
@@ -177,52 +188,62 @@ fun CameraScreen() {
                 .padding(16.dp)
         )
 
-        Row(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(bottom = 32.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            TextButton(onClick = { showGrid = !showGrid }) {
-                Text(if (showGrid) "Grid on" else "Grid off", color = Color.White)
+            if (showFilters) {
+                FilterPicker(selected = photoFilter, onSelect = { photoFilter = it })
             }
-            TextButton(onClick = {
-                // Scan looks at the scene, so it always uses the back camera.
-                useFrontCamera = false
-                poseMode = false
-                bestHeading = null
-                scanSession = ScanSession()
-            }) {
-                Text("Scan", color = Color.White)
-            }
-            Box(
-                modifier = Modifier
-                    .size(76.dp)
-                    .border(4.dp, Color.White, CircleShape)
-                    .padding(8.dp)
-                    .background(Color.White, CircleShape)
-                    .clickable { takePhoto(context, imageCapture) }
-            )
-            TextButton(onClick = {
-                poseMode = !poseMode
-                scanSession = null
-                bestHeading = null
-            }) {
-                Text(if (poseMode) "Pose on" else "Pose", color = Color.White)
-            }
-            TextButton(onClick = { useFrontCamera = !useFrontCamera }) {
-                Text(if (useFrontCamera) "Front" else "Back", color = Color.White)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ControlButton(
+                    ControlIcon.Filter,
+                    active = showFilters || photoFilter != PhotoFilter.Original,
+                    onClick = { showFilters = !showFilters }
+                )
+                ControlButton(ControlIcon.Grid, active = showGrid, onClick = { showGrid = !showGrid })
+                ControlButton(ControlIcon.Scan, active = scanSession != null, onClick = {
+                    // Scan looks at the scene, so it always uses the back camera.
+                    useFrontCamera = false
+                    poseMode = false
+                    bestHeading = null
+                    scanSession = ScanSession()
+                })
+                Box(
+                    modifier = Modifier
+                        .size(76.dp)
+                        .border(4.dp, Color.White, CircleShape)
+                        .padding(8.dp)
+                        .background(Color.White, CircleShape)
+                        .clickable { takePhoto(context, imageCapture, photoFilter) }
+                )
+                ControlButton(ControlIcon.Pose, active = poseMode, onClick = {
+                    poseMode = !poseMode
+                    scanSession = null
+                    bestHeading = null
+                })
+                ControlButton(ControlIcon.Flip, active = useFrontCamera, onClick = { useFrontCamera = !useFrontCamera })
             }
         }
     }
 }
 
-private fun takePhoto(context: Context, imageCapture: ImageCapture) {
+private fun takePhoto(context: Context, imageCapture: ImageCapture, filter: PhotoFilter) {
     val fileName = "CameraMan_" +
         SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
+    if (filter != PhotoFilter.Original) {
+        takeFilteredPhoto(context, imageCapture, filter, fileName)
+        return
+    }
     val contentValues = ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
         put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -250,3 +271,33 @@ private fun takePhoto(context: Context, imageCapture: ImageCapture) {
         }
     )
 }
+
+/** Captures into memory, applies the filter, then saves. Runs off the main thread. */
+private fun takeFilteredPhoto(context: Context, imageCapture: ImageCapture, filter: PhotoFilter, fileName: String) {
+    val mainExecutor = ContextCompat.getMainExecutor(context)
+    imageCapture.takePicture(
+        photoExecutor,
+        object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                val saved = try {
+                    val bitmap = image.use { filteredBitmap(it, filter) }
+                    saveJpeg(context, bitmap, fileName).also { bitmap.recycle() }
+                } catch (exception: Exception) {
+                    false
+                }
+                mainExecutor.execute {
+                    val message = if (saved) "Saved to Pictures/CameraMan" else "Could not save photo"
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onError(exception: ImageCaptureException) {
+                mainExecutor.execute {
+                    Toast.makeText(context, "Could not save photo: ${exception.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    )
+}
+
+private val photoExecutor = Executors.newSingleThreadExecutor()

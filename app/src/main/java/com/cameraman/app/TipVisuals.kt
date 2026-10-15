@@ -260,6 +260,18 @@ fun LegendButton(modifier: Modifier = Modifier) {
                         Text(kind.meaning, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp))
                     }
                 }
+                for (icon in ControlIcon.entries) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Canvas(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.Black, CircleShape)
+                        ) {
+                            drawControlIcon(icon, center, size.minDimension * 0.55f, Color.White)
+                        }
+                        Text(icon.meaning, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
                 TextButton(onClick = { isOpen = false }, modifier = Modifier.align(Alignment.End)) {
                     Text("OK", color = Color.White)
                 }
