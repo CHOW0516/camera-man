@@ -38,6 +38,9 @@ fun PoseOverlay(
     isFrontCamera: Boolean,
     targetPose: TargetPose,
     onNextPose: () -> Unit,
+    zoom: ZoomInfo?,
+    pitchDegrees: Float?,
+    onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier) {
@@ -62,7 +65,7 @@ fun PoseOverlay(
             Offset(screenPoint.x * screenWidth, screenPoint.y * screenHeight)
         }
         val match = personJoints?.let { matchPose(it, poseToMatch) }
-        val newTip = reading?.let { choosePoseTip(it.frameBrightness, personJoints, standBox, screenWidth, match) }
+        val newTip = reading?.let { choosePoseTip(it.frameBrightness, personJoints, standBox, screenWidth, match, zoom, pitchDegrees) }
         val tipStabilizer = remember { TipStabilizer() }
         val tip = tipStabilizer.update(newTip, hasReading = reading != null)
         BuzzWhenGood(tip?.kind)
@@ -104,7 +107,7 @@ fun PoseOverlay(
                 TipKind.StepCloser -> drawCornerArrows(standBox, pointInward = false)
                 TipKind.StepBack -> drawCornerArrows(standBox, pointInward = true)
                 TipKind.LooksGood -> drawSuccessFrame()
-                else -> Unit
+                else -> tip?.let { drawCameraMoveHint(it, zoom) }
             }
         }
 
@@ -115,7 +118,7 @@ fun PoseOverlay(
                 .padding(top = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (tip != null) TipBadge(kind = tip.kind)
+            if (tip != null) TipBadge(kind = tip.kind, onClick = tip.zoomTo?.let { ratio -> { onZoom(ratio) } })
         }
         Column(
             modifier = Modifier

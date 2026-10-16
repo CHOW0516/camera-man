@@ -64,7 +64,9 @@ fun choosePoseTip(
     joints: Map<Joint, Offset>?,
     standBox: Rect,
     screenWidth: Float,
-    match: PoseMatch?
+    match: PoseMatch?,
+    zoom: ZoomInfo?,
+    pitchDegrees: Float?
 ): Tip {
     if (frameBrightness < TOO_DARK_BRIGHTNESS) {
         return Tip(TipKind.TooDark)
@@ -74,8 +76,10 @@ fun choosePoseTip(
     }
     val leftAnkle = joints[Joint.LeftAnkle]
     val rightAnkle = joints[Joint.RightAnkle]
+    tiltTip(pitchDegrees)?.let { return it }
     if (leftAnkle == null && rightAnkle == null) {
-        return Tip(TipKind.StepBack)
+        // Feet are cut off: show about a third more of the scene.
+        return sizeTip(0.75f, zoom)
     }
 
     val hips = listOfNotNull(joints[Joint.LeftHip], joints[Joint.RightHip])
@@ -93,8 +97,9 @@ fun choosePoseTip(
         // Nose-to-ankle covers about 90% of a person's height.
         val bodyHeight = (lowestFoot - head.y) / 0.9f
         val heightRatio = bodyHeight / standBox.height
-        if (heightRatio < MIN_HEIGHT_RATIO) return Tip(TipKind.StepCloser)
-        if (heightRatio > MAX_HEIGHT_RATIO) return Tip(TipKind.StepBack)
+        if (heightRatio < MIN_HEIGHT_RATIO || heightRatio > MAX_HEIGHT_RATIO) {
+            return sizeTip(1f / heightRatio, zoom)
+        }
     }
 
     if (match.score < GOOD_MATCH && match.worstBone != null) {

@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
@@ -22,7 +23,14 @@ private const val FRAMES_BEFORE_TIP_CHANGE = 4
 
 /** Draws the face box, the target dot and the current tip over the camera preview. */
 @Composable
-fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modifier = Modifier) {
+fun CoachOverlay(
+    reading: FrameReading?,
+    isFrontCamera: Boolean,
+    zoom: ZoomInfo?,
+    pitchDegrees: Float?,
+    onZoom: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
     BoxWithConstraints(modifier = modifier) {
         val viewAspectRatio = constraints.maxWidth.toFloat() / constraints.maxHeight
         val faceOnScreen = reading?.faceBox?.let {
@@ -32,7 +40,10 @@ fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modif
             // Mirroring swaps which half of the face is on the left of the screen.
             val leftOnScreen = if (isFrontCamera) it.faceRightBrightness else it.faceLeftBrightness
             val rightOnScreen = if (isFrontCamera) it.faceLeftBrightness else it.faceRightBrightness
-            chooseTip(it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness, leftOnScreen, rightOnScreen)
+            chooseTip(
+                it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness,
+                leftOnScreen, rightOnScreen, zoom, pitchDegrees
+            )
         }
         val tipStabilizer = remember { TipStabilizer() }
         val tip = tipStabilizer.update(newTip, hasReading = reading != null)
@@ -68,18 +79,28 @@ fun CoachOverlay(reading: FrameReading?, isFrontCamera: Boolean, modifier: Modif
                     )
                 }
                 TipKind.StepCloser -> if (faceRect != null) drawCornerArrows(faceRect, pointInward = false)
-                TipKind.NeedHeadroom -> {
-                    val x = faceRect?.center?.x ?: center.x
-                    drawArrow(Offset(x, 4.dp.toPx()), Offset(x, 56.dp.toPx()), Color.White, strokeWidth = 6.dp.toPx())
+                TipKind.StepBack -> if (faceRect != null) drawCornerArrows(faceRect, pointInward = true)
+                TipKind.RaisePhone, TipKind.LowerPhone -> tip?.target?.let { target ->
+                    // Dashed line where the eyes should be, and an arrow showing where the face will move.
+                    val lineY = target.y * size.height
+                    drawLine(
+                        GoodGreen, Offset(0f, lineY), Offset(size.width, lineY), 3.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(24f, 16f))
+                    )
+                    if (faceRect != null) {
+                        val eyePoint = Offset(faceRect.center.x, faceRect.top + faceRect.height * 0.4f)
+                        drawArrow(eyePoint, Offset(eyePoint.x, lineY), GoodGreen, 6.dp.toPx())
+                    }
                 }
                 TipKind.LooksGood -> drawSuccessFrame()
-                else -> Unit
+                else -> tip?.let { drawCameraMoveHint(it, zoom) }
             }
         }
 
         if (tip != null) {
             TipBadge(
                 kind = tip.kind,
+                onClick = tip.zoomTo?.let { ratio -> { onZoom(ratio) } },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()

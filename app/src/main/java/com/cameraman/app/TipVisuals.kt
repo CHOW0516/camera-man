@@ -7,6 +7,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,6 +41,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,13 +61,14 @@ private fun badgeColor(level: TipLevel) = when (level) {
     TipLevel.Info -> Color.Black.copy(alpha = 0.55f)
 }
 
-/** Round badge at the top of the screen showing the current tip as an icon. */
+/** Round badge at the top of the screen showing the current tip as an icon. Tappable when [onClick] is set. */
 @Composable
-fun TipBadge(kind: TipKind, modifier: Modifier = Modifier) {
+fun TipBadge(kind: TipKind, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Canvas(
         modifier = modifier
             .size(72.dp)
             .background(badgeColor(kind.level), CircleShape)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
         drawTipIcon(kind, center, size.minDimension * 0.6f)
     }
@@ -113,6 +118,36 @@ fun DrawScope.drawArrow(from: Offset, to: Offset, color: Color, strokeWidth: Flo
     for (wing in listOf(-0.5f, 0.5f)) {
         val wingAngle = angle + PI.toFloat() + wing
         drawLine(color, to, to + Offset(cos(wingAngle) * headLength, sin(wingAngle) * headLength), strokeWidth, cap = StrokeCap.Round)
+    }
+}
+
+/**
+ * Screen-wide hints for moving the camera: the area a zoom-in will keep (dashed box),
+ * or big curved arrows at the screen edges for tilting.
+ */
+fun DrawScope.drawCameraMoveHint(tip: Tip, zoom: ZoomInfo?) {
+    when (tip.kind) {
+        TipKind.ZoomIn -> {
+            val zoomTo = tip.zoomTo ?: return
+            val currentRatio = zoom?.ratio ?: return
+            val keptSize = size / (zoomTo / currentRatio)
+            drawRect(
+                Color.White,
+                topLeft = center - Offset(keptSize.width / 2, keptSize.height / 2),
+                size = keptSize,
+                style = Stroke(3.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(24f, 16f)))
+            )
+        }
+        TipKind.TiltUp, TipKind.TiltDown -> {
+            val arrowLength = 80.dp.toPx()
+            val margin = 28.dp.toPx()
+            val towardTop = if (tip.kind == TipKind.TiltUp) -1f else 1f
+            for (x in listOf(margin, size.width - margin)) {
+                val start = Offset(x, center.y - towardTop * arrowLength / 2)
+                drawArrow(start, start + Offset(0f, towardTop * arrowLength), LightYellow, 6.dp.toPx())
+            }
+        }
+        else -> Unit
     }
 }
 
@@ -170,9 +205,38 @@ fun DrawScope.drawTipIcon(kind: TipKind, center: Offset, iconSize: Float, color:
                 else drawArrow(outerCorner, innerCorner, color, stroke)
             }
         }
-        TipKind.NeedHeadroom -> {
-            drawPerson(center + Offset(0f, half * 0.3f), iconSize * 0.6f, color, filled = false, strokeWidth = stroke)
-            drawArrow(center + Offset(0f, -half), center + Offset(0f, -half * 0.35f), color, stroke)
+        TipKind.ZoomIn, TipKind.ZoomOut -> {
+            // Magnifier with + or -.
+            val lensCenter = center - Offset(half * 0.15f, half * 0.15f)
+            val lensRadius = half * 0.55f
+            drawCircle(color, lensRadius, lensCenter, style = Stroke(stroke))
+            drawLine(color, lensCenter + Offset(lensRadius, lensRadius) * 0.7f, center + Offset(half * 0.85f, half * 0.85f), stroke * 1.6f, cap = StrokeCap.Round)
+            val bar = lensRadius * 0.5f
+            drawLine(color, lensCenter - Offset(bar, 0f), lensCenter + Offset(bar, 0f), stroke, cap = StrokeCap.Round)
+            if (kind == TipKind.ZoomIn) {
+                drawLine(color, lensCenter - Offset(0f, bar), lensCenter + Offset(0f, bar), stroke, cap = StrokeCap.Round)
+            }
+        }
+        TipKind.TiltUp, TipKind.TiltDown -> {
+            // Phone with a curved arrow beside it: turn the camera up or down.
+            drawPhone(center - Offset(half * 0.35f, 0f), iconSize * 0.75f, color, stroke)
+            val arcBox = Rect(center + Offset(half * 0.1f, 0f), half * 0.6f)
+            drawArc(color, -80f, 160f, useCenter = false, topLeft = arcBox.topLeft, size = arcBox.size, style = Stroke(stroke, cap = StrokeCap.Round))
+            val arcTop = Offset(arcBox.center.x + half * 0.1f, arcBox.top)
+            val arcBottom = Offset(arcBox.center.x + half * 0.1f, arcBox.bottom)
+            if (kind == TipKind.TiltUp) {
+                drawArrow(arcTop + Offset(half * 0.2f, half * 0.05f), arcTop, color, stroke)
+            } else {
+                drawArrow(arcBottom + Offset(half * 0.2f, -half * 0.05f), arcBottom, color, stroke)
+            }
+        }
+        TipKind.RaisePhone, TipKind.LowerPhone -> {
+            // Phone with a straight arrow beside it: move the whole phone up or down.
+            drawPhone(center - Offset(half * 0.35f, 0f), iconSize * 0.75f, color, stroke)
+            val arrowX = center.x + half * 0.5f
+            val top = Offset(arrowX, center.y - half * 0.8f)
+            val bottom = Offset(arrowX, center.y + half * 0.8f)
+            if (kind == TipKind.RaisePhone) drawArrow(bottom, top, color, stroke) else drawArrow(top, bottom, color, stroke)
         }
         TipKind.LineUp -> {
             drawCircle(GoodGreen, radius = half * 0.3f, center = center + Offset(half * 0.5f, -half * 0.5f))
@@ -211,6 +275,12 @@ private fun DrawScope.drawSun(center: Offset, radius: Float, rayEnd: Float, colo
         val direction = Offset(cos(angle), sin(angle))
         drawLine(color, center + direction * (radius * 1.35f), center + direction * rayEnd, strokeWidth, cap = StrokeCap.Round)
     }
+}
+
+/** Phone outline, [height] tall, centered on [center]. */
+private fun DrawScope.drawPhone(center: Offset, height: Float, color: Color, strokeWidth: Float) {
+    val phoneSize = Size(height * 0.5f, height)
+    drawRoundRect(color, center - Offset(phoneSize.width / 2, height / 2), phoneSize, CornerRadius(strokeWidth * 2), style = Stroke(strokeWidth))
 }
 
 /** Simple person icon: head and body, [height] tall, centered on [center]. */
@@ -272,10 +342,34 @@ fun LegendButton(modifier: Modifier = Modifier) {
                         Text(icon.meaning, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp))
                     }
                 }
+                GeminiKeyField()
                 TextButton(onClick = { isOpen = false }, modifier = Modifier.align(Alignment.End)) {
                     Text("OK", color = Color.White)
                 }
             }
         }
     }
+}
+
+/** Lets the user paste a free Gemini API key; scan mode then asks Gemini to pick between the best views. */
+@Composable
+private fun GeminiKeyField() {
+    val context = LocalContext.current
+    var key by remember { mutableStateOf(loadGeminiKey(context) ?: "") }
+    Text(
+        "Optional: paste a free Gemini key (aistudio.google.com) and scan will also ask Gemini to pick the best view. " +
+            "Scan photos are then sent to Google.",
+        color = Color.White,
+        fontSize = 13.sp
+    )
+    OutlinedTextField(
+        value = key,
+        onValueChange = {
+            key = it
+            saveGeminiKey(context, it)
+        },
+        singleLine = true,
+        placeholder = { Text("Gemini API key") },
+        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+    )
 }

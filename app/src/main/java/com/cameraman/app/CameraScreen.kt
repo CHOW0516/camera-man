@@ -1,6 +1,20 @@
 package com.cameraman.app
 
 import android.content.ContentValues
+import android.hardware.camera2.CaptureRequest
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.concurrent.thread
+import kotlinx.coroutines.delay
 import android.content.Context
 import android.os.Build
 import android.provider.MediaStore
@@ -52,6 +66,8 @@ import java.text.SimpleDateFormat
 import java.util.concurrent.Executors
 import java.util.Locale
 
+private const val EXPOSURE_SETTLE_MILLIS = 800L
+
 @Composable
 fun CameraScreen() {
     val context = LocalContext.current
@@ -61,13 +77,63 @@ fun CameraScreen() {
     var showGrid by remember { mutableStateOf(true) }
     var frameReading by remember { mutableStateOf<FrameReading?>(null) }
     var scanSession by remember { mutableStateOf<ScanSession?>(null) }
-    var bestHeading by remember { mutableStateOf<Float?>(null) }
+    var scanTarget by remember { mutableStateOf<ScanTarget?>(null) }
+    var directionScores by remember { mutableStateOf<List<Float?>>(emptyList()) }
+    var askingAi by remember { mutableStateOf(false) }
+    var camera by remember { mutableStateOf<Camera?>(null) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
     var poseMode by remember { mutableStateOf(false) }
     var poseIndex by remember { mutableIntStateOf(0) }
     var sceneAnalyzer by remember { mutableStateOf<SceneAnalyzer?>(null) }
     var photoFilter by remember { mutableStateOf(PhotoFilter.Original) }
     var showFilters by remember { mutableStateOf(false) }
     val heading = rememberHeadingDegrees(enabled = scanSession != null)
+    val phoneTilt = rememberPhoneTilt()
+    val latestTilt = rememberUpdatedState(phoneTilt)
+
+    val zoomState = camera?.cameraInfo?.zoomState?.value
+    val zoom = zoomState?.let { ZoomInfo(zoomRatio, it.minZoomRatio, it.maxZoomRatio) }
+    fun setZoom(ratio: Float) {
+        val currentCamera = camera ?: return
+        val range = currentCamera.cameraInfo.zoomState.value ?: return
+        zoomRatio = ratio.coerceIn(range.minZoomRatio, range.maxZoomRatio)
+        currentCamera.cameraControl.setZoomRatio(zoomRatio)
+    }
+
+    fun stopScan() {
+        scanSession = null
+        scanTarget = null
+        askingAi = false
+        directionScores = emptyList()
+    }
+
+    /** Called once the scan has seen enough: picks the target, asking Gemini when a key is set. */
+    fun finishScan(session: ScanSession) {
+        val ranking = session.ranking()
+        val best = ranking.firstOrNull() ?: return
+        directionScores = session.directionScores(ranking)
+        val localPick = ScanTarget(best.headingDegrees, best.band, pickedByAi = false)
+        val apiKey = loadGeminiKey(context)
+        val candidates = ranking.distinctBy { it.direction }.filter { it.snapshot != null }.take(GEMINI_CANDIDATES)
+        if (apiKey == null || candidates.size < 2) {
+            scanTarget = localPick
+            return
+        }
+        askingAi = true
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        thread {
+            val choice = askGeminiForBestView(apiKey, candidates)
+            mainExecutor.execute {
+                // Ignore the answer if the user closed or restarted the scan meanwhile.
+                if (scanSession !== session) return@execute
+                askingAi = false
+                scanTarget = choice?.let {
+                    val view = candidates[it]
+                    ScanTarget(view.headingDegrees, view.band, pickedByAi = true)
+                } ?: localPick
+            }
+        }
+    }
 
     // TextureView mode (COMPATIBLE) is needed so the filter paint below reaches the camera image.
     val previewView = remember {
@@ -103,9 +169,10 @@ fun CameraScreen() {
                 frameReading = reading
                 val session = scanSession
                 val currentHeading = heading.value
-                if (session != null && bestHeading == null && currentHeading != null) {
-                    session.record(currentHeading, reading)
-                    bestHeading = session.bestHeading()
+                val currentPitch = latestTilt.value?.pitchDegrees
+                if (session != null && !session.isComplete && currentHeading != null && currentPitch != null) {
+                    session.record(currentHeading, currentPitch, reading)
+                    if (session.isComplete) finishScan(session)
                 }
             }
         }
@@ -122,6 +189,16 @@ fun CameraScreen() {
     LaunchedEffect(photoFilter) {
         val paint = photoFilter.layerPaint()
         previewView.setLayerType(if (paint == null) View.LAYER_TYPE_NONE else View.LAYER_TYPE_HARDWARE, paint)
+    }
+
+    // While scanning: keep small snapshots for Gemini, and lock the exposure so the camera stops
+    // brightening dark directions and darkening bright ones (otherwise every direction looks the same).
+    LaunchedEffect(sceneAnalyzer, camera, scanSession) {
+        val scanning = scanSession != null
+        sceneAnalyzer?.takeSnapshots = scanning
+        // Give auto exposure a moment to settle (the camera may have just switched) before locking it.
+        if (scanning) delay(EXPOSURE_SETTLE_MILLIS)
+        camera?.let { setExposureLocked(it, scanning) }
     }
 
     LaunchedEffect(sceneAnalyzer, poseMode) {
@@ -143,8 +220,9 @@ fun CameraScreen() {
                 CameraSelector.DEFAULT_BACK_CAMERA
             }
             frameReading = null
+            zoomRatio = 1f
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture, imageAnalysis)
+            camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture, imageAnalysis)
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
@@ -152,11 +230,19 @@ fun CameraScreen() {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                // Pinch to zoom anywhere on the preview.
+                detectTransformGestures { _, _, zoomChange, _ -> setZoom(zoomRatio * zoomChange) }
+            }
+    ) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
 
         if (showGrid) GridOverlay(modifier = Modifier.fillMaxSize())
-        LevelIndicator(modifier = Modifier.fillMaxSize())
+        LevelIndicator(tilt = phoneTilt, modifier = Modifier.fillMaxSize())
         val session = scanSession
         if (poseMode) {
             PoseOverlay(
@@ -164,19 +250,29 @@ fun CameraScreen() {
                 isFrontCamera = useFrontCamera,
                 targetPose = poseLibrary[poseIndex],
                 onNextPose = { poseIndex = (poseIndex + 1) % poseLibrary.size },
+                zoom = zoom,
+                pitchDegrees = phoneTilt?.pitchDegrees,
+                onZoom = ::setZoom,
                 modifier = Modifier.fillMaxSize()
             )
         } else if (session == null) {
-            CoachOverlay(reading = frameReading, isFrontCamera = useFrontCamera, modifier = Modifier.fillMaxSize())
+            CoachOverlay(
+                reading = frameReading,
+                isFrontCamera = useFrontCamera,
+                zoom = zoom,
+                pitchDegrees = phoneTilt?.pitchDegrees,
+                onZoom = ::setZoom,
+                modifier = Modifier.fillMaxSize()
+            )
         } else {
             ScanOverlay(
                 session = session,
                 heading = heading.value,
-                bestHeading = bestHeading,
-                onClose = {
-                    scanSession = null
-                    bestHeading = null
-                },
+                pitchDegrees = phoneTilt?.pitchDegrees,
+                directionScores = directionScores,
+                target = scanTarget,
+                askingAi = askingAi,
+                onClose = ::stopScan,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
         }
@@ -200,6 +296,15 @@ fun CameraScreen() {
             if (showFilters) {
                 FilterPicker(selected = photoFilter, onSelect = { photoFilter = it })
             }
+            if (zoom != null && zoom.max > zoom.min) {
+                // Shows the zoom; tap to jump between 1x and 2x.
+                TextButton(
+                    onClick = { setZoom(if (zoomRatio < 1.5f) 2f else 1f) },
+                    modifier = Modifier.background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                ) {
+                    Text(String.format(Locale.US, "%.1fx", zoomRatio), color = Color.White)
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -215,7 +320,7 @@ fun CameraScreen() {
                     // Scan looks at the scene, so it always uses the back camera.
                     useFrontCamera = false
                     poseMode = false
-                    bestHeading = null
+                    stopScan()
                     scanSession = ScanSession()
                 })
                 Box(
@@ -228,8 +333,7 @@ fun CameraScreen() {
                 )
                 ControlButton(ControlIcon.Pose, active = poseMode, onClick = {
                     poseMode = !poseMode
-                    scanSession = null
-                    bestHeading = null
+                    stopScan()
                 })
                 ControlButton(ControlIcon.Flip, active = useFrontCamera, onClick = { useFrontCamera = !useFrontCamera })
             }
@@ -301,3 +405,18 @@ private fun takeFilteredPhoto(context: Context, imageCapture: ImageCapture, filt
 }
 
 private val photoExecutor = Executors.newSingleThreadExecutor()
+
+/** Locks or unlocks auto exposure, so brightness can be compared between directions while scanning. */
+@OptIn(ExperimentalCamera2Interop::class)
+private fun setExposureLocked(camera: Camera, locked: Boolean) {
+    val control = Camera2CameraControl.from(camera.cameraControl)
+    if (locked) {
+        control.setCaptureRequestOptions(
+            CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
+                .build()
+        )
+    } else {
+        control.clearCaptureRequestOptions()
+    }
+}

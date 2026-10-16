@@ -1,6 +1,8 @@
 package com.cameraman.app
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.graphics.PointF
 import android.graphics.RectF
 import androidx.camera.core.ImageAnalysis
@@ -8,11 +10,28 @@ import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.pose.PoseDetector
+import java.io.ByteArrayOutputStream
 import kotlin.math.abs
 
 private const val GRID_COLUMNS = 48
 private const val GRID_ROWS = 36
 private const val HIGHLIGHT_LEVEL = 240
+
+/** Neighboring cells closer than this count as one plain area (sky, wall). */
+private const val PLAIN_STEP = 6
+
+/** A brightness jump at least this big counts as part of a sharp line. */
+private const val LINE_STEP = 25
+
+/** Snapshots for the scan are taken every this many frames, and sized to this many pixels across. */
+private const val SNAPSHOT_EVERY_FRAMES = 4
+private const val SNAPSHOT_WIDTH = 320
+
+/** Where the person will stand in a scanned view: the middle of the frame. */
+private val SUBJECT_AREA = RectF(0.3f, 0.2f, 0.7f, 0.95f)
+
+/** A small JPEG of one frame, kept by scan mode to show Gemini the best views. */
+class Snapshot(val jpeg: ByteArray)
 
 /**
  * What one camera frame tells us, in upright image coordinates (0..1, not mirrored).
@@ -28,7 +47,17 @@ data class FrameReading(
     val clutter: Float,
     val imageAspectRatio: Float,
     /** Body joints found by pose detection; null when pose mode is off or nobody was found. */
-    val bodyPoints: Map<Joint, PointF>? = null
+    val bodyPoints: Map<Joint, PointF>? = null,
+    /** Busyness where a person would stand (same scale as [clutter]). */
+    val subjectClutter: Float = 0f,
+    /** 0..1: how much of the view is plain areas like sky or walls. */
+    val plainFraction: Float = 0f,
+    /** 0..1: how alike the left and right halves are. */
+    val symmetry: Float = 0f,
+    /** 0..1: length of the longest straight vertical or horizontal line, as a share of the view. */
+    val lineStrength: Float = 0f,
+    /** Only taken while [SceneAnalyzer.takeSnapshots] is on, every few frames. */
+    val snapshot: Snapshot? = null
 )
 
 /** A joint must be at least this likely to be in the frame to be used. */
@@ -49,6 +78,12 @@ class SceneAnalyzer(
     @Volatile
     var usePoseDetection = false
 
+    /** Set while scanning, so the best views can be shown to Gemini. */
+    @Volatile
+    var takeSnapshots = false
+
+    private var frameNumber = 0
+
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
         val mediaImage = imageProxy.image
@@ -63,6 +98,12 @@ class SceneAnalyzer(
         val uprightHeight = if (isSideways) imageProxy.width else imageProxy.height
 
         val inputImage = InputImage.fromMediaImage(mediaImage, rotationDegrees)
+        frameNumber++
+        val snapshot = if (takeSnapshots && frameNumber % SNAPSHOT_EVERY_FRAMES == 0) {
+            takeSnapshot(imageProxy, rotationDegrees)
+        } else {
+            null
+        }
 
         fun report(faceBox: RectF?, bodyPoints: Map<Joint, PointF>?) {
             onReading(
@@ -79,7 +120,12 @@ class SceneAnalyzer(
                     },
                     clutter = lumaGrid.edgeStrength(),
                     imageAspectRatio = uprightWidth.toFloat() / uprightHeight,
-                    bodyPoints = bodyPoints
+                    bodyPoints = bodyPoints,
+                    subjectClutter = lumaGrid.edgeStrength(SUBJECT_AREA),
+                    plainFraction = lumaGrid.plainFraction(PLAIN_STEP),
+                    symmetry = lumaGrid.symmetry(),
+                    lineStrength = lumaGrid.lineStrength(LINE_STEP),
+                    snapshot = snapshot
                 )
             )
         }
@@ -114,6 +160,24 @@ class SceneAnalyzer(
                 }
                 .addOnCompleteListener { imageProxy.close() }
         }
+    }
+
+    /** A small upright JPEG of the frame. Returns null if the frame could not be converted. */
+    private fun takeSnapshot(imageProxy: ImageProxy, rotationDegrees: Int): Snapshot? = try {
+        val frame = imageProxy.toBitmap()
+        val scale = SNAPSHOT_WIDTH.toFloat() / maxOf(frame.width, frame.height)
+        val matrix = Matrix().apply {
+            postScale(scale, scale)
+            postRotate(rotationDegrees.toFloat())
+        }
+        val small = Bitmap.createBitmap(frame, 0, 0, frame.width, frame.height, matrix, true)
+        val stream = ByteArrayOutputStream()
+        small.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+        small.recycle()
+        frame.recycle()
+        Snapshot(stream.toByteArray())
+    } catch (exception: Exception) {
+        null
     }
 
     /** Samples the Y (brightness) plane at evenly spaced points, in sensor orientation. */
@@ -176,26 +240,100 @@ class LumaGrid(val columns: Int, val rows: Int, private val values: IntArray) {
     }
 
     /**
-     * Average brightness jump between neighboring cells. Plain walls and sky score low,
-     * busy backgrounds (shelves, crowds, leaves) score high.
+     * Average brightness jump between neighboring cells inside [area] (0..1 coordinates).
+     * Plain walls and sky score low, busy backgrounds (shelves, crowds, leaves) score high.
      */
-    fun edgeStrength(): Float {
+    fun edgeStrength(area: RectF = RectF(0f, 0f, 1f, 1f)): Float {
+        val firstColumn = (area.left * columns).toInt().coerceIn(0, columns - 1)
+        val lastColumn = (area.right * columns).toInt().coerceIn(firstColumn, columns - 1)
+        val firstRow = (area.top * rows).toInt().coerceIn(0, rows - 1)
+        val lastRow = (area.bottom * rows).toInt().coerceIn(firstRow, rows - 1)
         var total = 0
         var count = 0
-        for (row in 0 until rows) {
-            for (column in 0 until columns) {
+        for (row in firstRow..lastRow) {
+            for (column in firstColumn..lastColumn) {
                 val value = valueAt(column, row)
-                if (column + 1 < columns) {
+                if (column + 1 <= lastColumn) {
                     total += abs(value - valueAt(column + 1, row))
                     count++
                 }
-                if (row + 1 < rows) {
+                if (row + 1 <= lastRow) {
                     total += abs(value - valueAt(column, row + 1))
                     count++
                 }
             }
         }
-        return total.toFloat() / count
+        return if (count == 0) 0f else total.toFloat() / count
+    }
+
+    /** Share of cells that differ from their right and lower neighbors by less than [step]. */
+    fun plainFraction(step: Int): Float {
+        var plainCells = 0
+        for (row in 0 until rows - 1) {
+            for (column in 0 until columns - 1) {
+                val value = valueAt(column, row)
+                if (abs(value - valueAt(column + 1, row)) < step && abs(value - valueAt(column, row + 1)) < step) {
+                    plainCells++
+                }
+            }
+        }
+        return plainCells.toFloat() / ((rows - 1) * (columns - 1))
+    }
+
+    /** 1 when the left half mirrors the right half exactly, lower as they differ. */
+    fun symmetry(): Float {
+        var totalDifference = 0
+        for (row in 0 until rows) {
+            for (column in 0 until columns / 2) {
+                totalDifference += abs(valueAt(column, row) - valueAt(columns - 1 - column, row))
+            }
+        }
+        return 1f - totalDifference.toFloat() / (rows * (columns / 2) * 255)
+    }
+
+    /**
+     * Longest unbroken vertical or horizontal edge (brightness jump of at least [step]),
+     * as a share of the view's height or width. Allows one cell of drift for slightly tilted lines.
+     */
+    fun lineStrength(step: Int): Float {
+        fun verticalJump(column: Int, row: Int) =
+            column in 0 until columns - 1 && abs(valueAt(column, row) - valueAt(column + 1, row)) >= step
+        fun horizontalJump(column: Int, row: Int) =
+            row in 0 until rows - 1 && abs(valueAt(column, row) - valueAt(column, row + 1)) >= step
+
+        var longestVertical = 0
+        for (startColumn in 0 until columns - 1) {
+            var column = startColumn
+            var run = 0
+            for (row in 0 until rows) {
+                val next = listOf(column, column - 1, column + 1).firstOrNull { verticalJump(it, row) }
+                if (next == null) {
+                    run = 0
+                    column = startColumn
+                } else {
+                    run++
+                    column = next
+                    longestVertical = maxOf(longestVertical, run)
+                }
+            }
+        }
+        var longestHorizontal = 0
+        for (startRow in 0 until rows - 1) {
+            var row = startRow
+            var run = 0
+            for (column in 0 until columns) {
+                val next = listOf(row, row - 1, row + 1).firstOrNull { horizontalJump(column, it) }
+                if (next == null) {
+                    run = 0
+                    row = startRow
+                } else {
+                    run++
+                    row = next
+                    longestHorizontal = maxOf(longestHorizontal, run)
+                }
+            }
+        }
+        return maxOf(longestVertical.toFloat() / rows, longestHorizontal.toFloat() / columns)
     }
 
     fun fractionAtOrAbove(level: Int): Float = values.count { it >= level }.toFloat() / values.size
