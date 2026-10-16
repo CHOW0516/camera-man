@@ -39,6 +39,13 @@ Tips are drawn, not written: a round icon badge at the top (red = light problem,
 - Coaching still reads the unfiltered camera image
 - A filtered photo is re-encoded, so it loses its EXIF data (time, camera info); unfiltered photos keep it
 
+## Zoom, up/down and smarter scan
+
+- Pinch to zoom, or tap the zoom chip for 1x/2x. When the face or body is too small or too big, a magnifier tip appears; tap it to zoom. Walking arrows only show when more than 2x would be needed or the camera is already fully zoomed out.
+- Up/down: a tilted-phone tip when the camera points up or down more than 12°, and raise/lower-phone tips (with a green eye line) when the face sits too low or high
+- Scan now locks exposure so light can be compared, records up/straight/down views, and scores each view mostly on a clean area where the person stands, plus plain areas, straight lines and symmetry. The ring colors every direction green/yellow/red; at the best direction a tilt arrow shows how far up or down to point.
+- Optional Gemini: paste a free key from aistudio.google.com in the **?** screen. Scan then sends small photos of the top 3 views to Gemini (`gemini-flash-latest`) to pick one (sparkle icon). Free-tier data may be used by Google; without a key or network the app uses its own pick.
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

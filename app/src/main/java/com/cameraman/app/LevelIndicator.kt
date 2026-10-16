@@ -30,12 +30,18 @@ private const val SMOOTHING = 0.15f
 private const val MIN_UPRIGHT_GRAVITY = 3f
 
 /**
+ * How the phone is held. [sideDegrees]: side tilt, 0 = level horizon.
+ * [pitchDegrees]: 0 = camera points straight ahead, positive = camera points down, negative = up.
+ */
+data class PhoneTilt(val sideDegrees: Float, val pitchDegrees: Float)
+
+/**
  * A line across the middle of the screen that tilts with the phone.
  * White while tilted, green when the horizon is level.
  */
 @Composable
-fun LevelIndicator(modifier: Modifier = Modifier) {
-    val tiltDegrees = rememberTiltDegrees() ?: return
+fun LevelIndicator(tilt: PhoneTilt?, modifier: Modifier = Modifier) {
+    val tiltDegrees = tilt?.sideDegrees ?: return
     val isLevel = abs(tiltDegrees) < LEVEL_TOLERANCE_DEGREES
 
     Canvas(modifier = modifier) {
@@ -53,11 +59,11 @@ fun LevelIndicator(modifier: Modifier = Modifier) {
     }
 }
 
-/** Returns the phone's side tilt in degrees (0 = level), or null when lying flat or no sensor. */
+/** Returns how the phone is held, or null when it is lying flat or has no sensor. */
 @Composable
-private fun rememberTiltDegrees(): Float? {
+fun rememberPhoneTilt(): PhoneTilt? {
     val context = LocalContext.current
-    var tiltDegrees by remember { mutableStateOf<Float?>(null) }
+    var phoneTilt by remember { mutableStateOf<PhoneTilt?>(null) }
 
     DisposableEffect(Unit) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -68,15 +74,26 @@ private fun rememberTiltDegrees(): Float? {
             override fun onSensorChanged(event: SensorEvent) {
                 val gravityX = event.values[0]
                 val gravityY = event.values[1]
-                if (sqrt(gravityX * gravityX + gravityY * gravityY) < MIN_UPRIGHT_GRAVITY) {
-                    tiltDegrees = null
+                val gravityZ = event.values[2]
+                val uprightGravity = sqrt(gravityX * gravityX + gravityY * gravityY)
+                if (uprightGravity < MIN_UPRIGHT_GRAVITY) {
+                    phoneTilt = null
                     return
                 }
                 val rawAngle = Math.toDegrees(atan2(gravityX, gravityY).toDouble()).toFloat()
                 // Measure tilt from the nearest upright or sideways position.
-                val tilt = rawAngle - (rawAngle / 90f).roundToInt() * 90f
-                val previous = tiltDegrees
-                tiltDegrees = if (previous == null) tilt else previous + SMOOTHING * (tilt - previous)
+                val side = rawAngle - (rawAngle / 90f).roundToInt() * 90f
+                // Screen turned toward the sky means the back camera points down.
+                val pitch = Math.toDegrees(atan2(gravityZ, uprightGravity).toDouble()).toFloat()
+                val previous = phoneTilt
+                phoneTilt = if (previous == null) {
+                    PhoneTilt(side, pitch)
+                } else {
+                    PhoneTilt(
+                        previous.sideDegrees + SMOOTHING * (side - previous.sideDegrees),
+                        previous.pitchDegrees + SMOOTHING * (pitch - previous.pitchDegrees)
+                    )
+                }
             }
 
             override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
@@ -88,5 +105,5 @@ private fun rememberTiltDegrees(): Float? {
         onDispose { sensorManager.unregisterListener(listener) }
     }
 
-    return tiltDegrees
+    return phoneTilt
 }
