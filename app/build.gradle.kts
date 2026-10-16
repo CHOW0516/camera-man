@@ -12,8 +12,19 @@ android {
         applicationId = "com.cameraman.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // Each GitHub build gets a higher number, so a new APK installs over the old one.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
         versionName = "0.1.0"
+    }
+
+    // Same key on every build machine, so updates install over the old app.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
