@@ -66,9 +66,10 @@ fun choosePoseTip(
     screenWidth: Float,
     match: PoseMatch?,
     zoom: ZoomInfo?,
-    pitchDegrees: Float?
+    pitchDegrees: Float?,
+    tooDarkForScene: Boolean?
 ): Tip {
-    if (frameBrightness < TOO_DARK_BRIGHTNESS) {
+    if (tooDarkForScene ?: (frameBrightness < TOO_DARK_BRIGHTNESS)) {
         return Tip(TipKind.TooDark)
     }
     if (joints == null || joints.size < MIN_JOINTS_FOR_PERSON || match == null) {

@@ -28,6 +28,8 @@ fun CoachOverlay(
     isFrontCamera: Boolean,
     zoom: ZoomInfo?,
     pitchDegrees: Float?,
+    scene: Scene?,
+    tooDarkForScene: Boolean?,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -42,7 +44,7 @@ fun CoachOverlay(
             val rightOnScreen = if (isFrontCamera) it.faceLeftBrightness else it.faceRightBrightness
             chooseTip(
                 it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness,
-                leftOnScreen, rightOnScreen, zoom, pitchDegrees
+                leftOnScreen, rightOnScreen, zoom, pitchDegrees, scene, tooDarkForScene, it.faceTint
             )
         }
         val tipStabilizer = remember { TipStabilizer() }

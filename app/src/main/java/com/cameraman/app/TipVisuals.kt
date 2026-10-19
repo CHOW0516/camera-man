@@ -54,6 +54,7 @@ import kotlin.math.sin
 val WarningRed = Color(0xFFE53935)
 val GoodGreen = Color(0xFF43A047)
 val LightYellow = Color(0xFFFFD54F)
+private val LeafGreen = Color(0xFF9CCC65)
 
 private fun badgeColor(level: TipLevel) = when (level) {
     TipLevel.Warning -> WarningRed.copy(alpha = 0.85f)
@@ -180,6 +181,11 @@ fun DrawScope.drawTipIcon(kind: TipKind, center: Offset, iconSize: Float, color:
             // Sun behind a dark person.
             drawSun(center + Offset(half * 0.35f, -half * 0.35f), half * 0.35f, half * 0.6f, LightYellow, stroke)
             drawPerson(center + Offset(-half * 0.2f, half * 0.15f), iconSize * 0.7f, Color.Black, filled = true)
+        }
+        TipKind.GreenCast -> {
+            // Person tinted green, with a leaf above.
+            drawPerson(center + Offset(0f, half * 0.2f), iconSize * 0.75f, LeafGreen, filled = true)
+            drawOval(LeafGreen, topLeft = center + Offset(half * 0.25f, -half), size = Size(half * 0.7f, half * 0.4f))
         }
         TipKind.HarshLight -> drawSun(center, half * 0.35f, half, LightYellow, stroke * 1.4f)
         TipKind.SideLight -> {
@@ -340,6 +346,13 @@ fun LegendButton(modifier: Modifier = Modifier) {
                             drawControlIcon(icon, center, size.minDimension * 0.55f, Color.White)
                         }
                         Text(icon.meaning, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+                Text("Scenes (camera recipes from Xiaohongshu):", color = Color.White, fontSize = 14.sp)
+                for (scene in Scene.entries) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(scene.emoji, fontSize = 24.sp)
+                        Text(scene.summary, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp))
                     }
                 }
                 GeminiKeyField()
