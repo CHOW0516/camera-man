@@ -9,6 +9,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.pose.PoseDetector
 import java.io.ByteArrayOutputStream
 import kotlin.math.abs
@@ -26,6 +27,10 @@ private const val LINE_STEP = 25
 /** Snapshots for the scan are taken every this many frames, and sized to this many pixels across. */
 private const val SNAPSHOT_EVERY_FRAMES = 4
 private const val SNAPSHOT_WIDTH = 320
+
+/** Image labels (what is in the scene) are found every this many frames, and kept when at least this sure. */
+private const val LABEL_EVERY_FRAMES = 10
+private const val MIN_LABEL_CONFIDENCE = 0.6f
 
 /** Where the person will stand in a scanned view: the middle of the frame. */
 private val SUBJECT_AREA = RectF(0.3f, 0.2f, 0.7f, 0.95f)
@@ -57,7 +62,11 @@ data class FrameReading(
     /** 0..1: length of the longest straight vertical or horizontal line, as a share of the view. */
     val lineStrength: Float = 0f,
     /** Only taken while [SceneAnalyzer.takeSnapshots] is on, every few frames. */
-    val snapshot: Snapshot? = null
+    val snapshot: Snapshot? = null,
+    /** What ML Kit sees in the scene ("Food", "Sky"...); only set every few frames, null otherwise. */
+    val labels: List<String>? = null,
+    /** Color cast on the face: positive = green (light bouncing off trees or grass), negative = magenta. */
+    val faceTint: Float? = null
 )
 
 /** A joint must be at least this likely to be in the frame to be used. */
@@ -71,6 +80,7 @@ private const val MIN_JOINT_LIKELIHOOD = 0.5f
 class SceneAnalyzer(
     private val faceDetector: FaceDetector,
     private val poseDetector: PoseDetector,
+    private val imageLabeler: ImageLabeler,
     private val onReading: (FrameReading) -> Unit
 ) : ImageAnalysis.Analyzer {
 
@@ -92,7 +102,9 @@ class SceneAnalyzer(
             return
         }
         val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-        val lumaGrid = sampleLumaGrid(imageProxy).rotatedUpright(rotationDegrees)
+        val lumaGrid = sampleGrid(imageProxy, plane = 0).rotatedUpright(rotationDegrees)
+        val blueGrid = sampleGrid(imageProxy, plane = 1).rotatedUpright(rotationDegrees)
+        val redGrid = sampleGrid(imageProxy, plane = 2).rotatedUpright(rotationDegrees)
         val isSideways = rotationDegrees == 90 || rotationDegrees == 270
         val uprightWidth = if (isSideways) imageProxy.height else imageProxy.width
         val uprightHeight = if (isSideways) imageProxy.width else imageProxy.height
@@ -105,7 +117,7 @@ class SceneAnalyzer(
             null
         }
 
-        fun report(faceBox: RectF?, bodyPoints: Map<Joint, PointF>?) {
+        fun report(faceBox: RectF?, bodyPoints: Map<Joint, PointF>?, labels: List<String>?) {
             onReading(
                 FrameReading(
                     frameBrightness = lumaGrid.averageBrightness(),
@@ -125,40 +137,58 @@ class SceneAnalyzer(
                     plainFraction = lumaGrid.plainFraction(PLAIN_STEP),
                     symmetry = lumaGrid.symmetry(),
                     lineStrength = lumaGrid.lineStrength(LINE_STEP),
-                    snapshot = snapshot
+                    snapshot = snapshot,
+                    labels = labels,
+                    // Green has both color values below the middle (128), magenta both above.
+                    faceTint = faceBox?.let { 128f - (blueGrid.averageBrightness(it) + redGrid.averageBrightness(it)) / 2 }
                 )
             )
         }
 
-        if (usePoseDetection) {
-            poseDetector.process(inputImage)
-                .addOnSuccessListener { pose ->
-                    val bodyPoints = Joint.entries.mapNotNull { joint ->
-                        val landmark = pose.getPoseLandmark(joint.mlKitType)
-                        if (landmark == null || landmark.inFrameLikelihood < MIN_JOINT_LIKELIHOOD) {
-                            null
-                        } else {
-                            joint to PointF(landmark.position.x / uprightWidth, landmark.position.y / uprightHeight)
-                        }
-                    }.toMap()
-                    report(faceBox = null, bodyPoints = bodyPoints.ifEmpty { null })
-                }
-                .addOnCompleteListener { imageProxy.close() }
-        } else {
-            faceDetector.process(inputImage)
-                .addOnSuccessListener { faces ->
-                    val largestFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                    val faceBox = largestFace?.boundingBox?.let { box ->
-                        RectF(
-                            box.left.toFloat() / uprightWidth,
-                            box.top.toFloat() / uprightHeight,
-                            box.right.toFloat() / uprightWidth,
-                            box.bottom.toFloat() / uprightHeight
-                        )
+        fun findSubject(labels: List<String>?) {
+            if (usePoseDetection) {
+                poseDetector.process(inputImage)
+                    .addOnSuccessListener { pose ->
+                        val bodyPoints = Joint.entries.mapNotNull { joint ->
+                            val landmark = pose.getPoseLandmark(joint.mlKitType)
+                            if (landmark == null || landmark.inFrameLikelihood < MIN_JOINT_LIKELIHOOD) {
+                                null
+                            } else {
+                                joint to PointF(landmark.position.x / uprightWidth, landmark.position.y / uprightHeight)
+                            }
+                        }.toMap()
+                        report(faceBox = null, bodyPoints = bodyPoints.ifEmpty { null }, labels = labels)
                     }
-                    report(faceBox = faceBox, bodyPoints = null)
+                    .addOnCompleteListener { imageProxy.close() }
+            } else {
+                faceDetector.process(inputImage)
+                    .addOnSuccessListener { faces ->
+                        val largestFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                        val faceBox = largestFace?.boundingBox?.let { box ->
+                            RectF(
+                                box.left.toFloat() / uprightWidth,
+                                box.top.toFloat() / uprightHeight,
+                                box.right.toFloat() / uprightWidth,
+                                box.bottom.toFloat() / uprightHeight
+                            )
+                        }
+                        report(faceBox = faceBox, bodyPoints = null, labels = labels)
+                    }
+                    .addOnCompleteListener { imageProxy.close() }
+            }
+        }
+
+        if (frameNumber % LABEL_EVERY_FRAMES == 0) {
+            imageLabeler.process(inputImage).addOnCompleteListener { task ->
+                val labels = if (task.isSuccessful) {
+                    task.result.filter { it.confidence >= MIN_LABEL_CONFIDENCE }.map { it.text }
+                } else {
+                    emptyList()
                 }
-                .addOnCompleteListener { imageProxy.close() }
+                findSubject(labels)
+            }
+        } else {
+            findSubject(labels = null)
         }
     }
 
@@ -180,16 +210,20 @@ class SceneAnalyzer(
         null
     }
 
-    /** Samples the Y (brightness) plane at evenly spaced points, in sensor orientation. */
-    private fun sampleLumaGrid(imageProxy: ImageProxy): LumaGrid {
-        val yPlane = imageProxy.planes[0]
-        val buffer = yPlane.buffer
+    /**
+     * Samples one plane at evenly spaced points, in sensor orientation: plane 0 is brightness (Y),
+     * 1 and 2 are the blue and red color differences (U and V, stored at half size).
+     */
+    private fun sampleGrid(imageProxy: ImageProxy, plane: Int): LumaGrid {
+        val imagePlane = imageProxy.planes[plane]
+        val buffer = imagePlane.buffer
+        val scale = if (plane == 0) 1 else 2
         val values = IntArray(GRID_COLUMNS * GRID_ROWS)
         for (row in 0 until GRID_ROWS) {
-            val pixelY = (row + 0.5f) * imageProxy.height / GRID_ROWS
+            val pixelY = (row + 0.5f) * imageProxy.height / GRID_ROWS / scale
             for (column in 0 until GRID_COLUMNS) {
-                val pixelX = (column + 0.5f) * imageProxy.width / GRID_COLUMNS
-                val index = pixelY.toInt() * yPlane.rowStride + pixelX.toInt() * yPlane.pixelStride
+                val pixelX = (column + 0.5f) * imageProxy.width / GRID_COLUMNS / scale
+                val index = pixelY.toInt() * imagePlane.rowStride + pixelX.toInt() * imagePlane.pixelStride
                 values[row * GRID_COLUMNS + column] = buffer.get(index).toInt() and 0xFF
             }
         }

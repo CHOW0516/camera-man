@@ -53,11 +53,6 @@ enum class PhotoFilter {
             )
         }
     }
-
-    /** Paint for the preview layer, or null for no filter. */
-    fun layerPaint(): Paint? = colorMatrix()?.let { matrix ->
-        Paint().apply { colorFilter = ColorMatrixColorFilter(matrix) }
-    }
 }
 
 /** Row of small sample pictures, one per filter. The chosen one has a white ring. */
@@ -93,15 +88,27 @@ fun FilterPicker(selected: PhotoFilter, onSelect: (PhotoFilter) -> Unit, modifie
     }
 }
 
-/** Turns a captured frame into an upright bitmap with the filter applied. */
-fun filteredBitmap(image: ImageProxy, filter: PhotoFilter): Bitmap {
+/** Paint with the scene's look first, then the filter on top; null when neither changes anything. */
+fun combinedPaint(filter: PhotoFilter, look: PhotoLook?): Paint? {
+    val filterMatrix = filter.colorMatrix()
+    val combined = when {
+        look == null -> filterMatrix ?: return null
+        filterMatrix == null -> look.colorMatrix()
+        else -> look.colorMatrix().apply { postConcat(filterMatrix) }
+    }
+    return Paint().apply { colorFilter = ColorMatrixColorFilter(combined) }
+}
+
+/** Turns a captured frame into an upright bitmap with the scene's look and the filter applied. */
+fun filteredBitmap(image: ImageProxy, filter: PhotoFilter, look: PhotoLook?): Bitmap {
     val source = image.toBitmap()
     val rotation = Matrix().apply { postRotate(image.imageInfo.rotationDegrees.toFloat()) }
     val upright = Bitmap.createBitmap(source, 0, 0, source.width, source.height, rotation, true)
     val result = Bitmap.createBitmap(upright.width, upright.height, Bitmap.Config.ARGB_8888)
-    Canvas(result).drawBitmap(upright, 0f, 0f, filter.layerPaint())
+    Canvas(result).drawBitmap(upright, 0f, 0f, combinedPaint(filter, look))
     if (upright !== source) upright.recycle()
     source.recycle()
+    if (look != null && look.needsPixelPass) look.applyPixelPass(result)
     return result
 }
 

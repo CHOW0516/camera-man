@@ -18,10 +18,11 @@ const val GEMINI_CANDIDATES = 3
 private const val PREFERENCES = "camera_man"
 private const val KEY_GEMINI = "gemini_api_key"
 
-private const val PROMPT = """These photos are views from one spot, numbered in order starting at 1.
-A person will stand in front of the camera for an influencer-style portrait, with the view behind them.
+private fun prompt(sceneTitle: String) = """These photos are views from one spot, numbered in order starting at 1.
+The photo will be an influencer-style "$sceneTitle" shot. If it has a person, they stand in front of the camera
+with the view behind them.
 Pick the view that makes the best background: clean and not messy, with clear structure
-(lines, symmetry, framing, open sky or plain walls) and pleasing light.
+(lines, symmetry, framing, open sky or plain walls) and pleasing light for this kind of shot.
 Answer only with JSON like {"best": 1}."""
 
 fun loadGeminiKey(context: Context): String? =
@@ -36,16 +37,16 @@ fun saveGeminiKey(context: Context, key: String) {
  * or null when the call fails (no network, bad key, quota used up, odd answer).
  * Blocks while waiting, so call it off the main thread.
  */
-fun askGeminiForBestView(apiKey: String, views: List<ScanView>): Int? {
+fun askGeminiForBestView(apiKey: String, views: List<ScanView>, sceneTitle: String): Int? {
     return try {
-        requestBestView(apiKey, views)
+        requestBestView(apiKey, views, sceneTitle)
     } catch (exception: Exception) {
         null
     }
 }
 
-private fun requestBestView(apiKey: String, views: List<ScanView>): Int? {
-    val parts = JSONArray().put(JSONObject().put("text", PROMPT))
+private fun requestBestView(apiKey: String, views: List<ScanView>, sceneTitle: String): Int? {
+    val parts = JSONArray().put(JSONObject().put("text", prompt(sceneTitle)))
     for (view in views) {
         val jpeg = view.snapshot?.jpeg ?: return null
         parts.put(

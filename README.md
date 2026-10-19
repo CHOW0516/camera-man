@@ -46,6 +46,16 @@ Tips are drawn, not written: a round icon badge at the top (red = light problem,
 - Scan now locks exposure so light can be compared, records up/straight/down views, and scores each view mostly on a clean area where the person stands, plus plain areas, straight lines and symmetry. The ring colors every direction green/yellow/red; at the best direction a tilt arrow shows how far up or down to point.
 - Optional Gemini: paste a free key from aistudio.google.com in the **?** screen. Scan then sends small photos of the top 3 views to Gemini (`gemini-flash-latest`) to pick one (sparkle icon). Free-tier data may be used by Google; without a key or network the app uses its own pick.
 
+## Smart camera: scene recipes
+
+- 19 scene recipes from Xiaohongshu pro-mode "photo formulas" (daytime/indoor/night portrait, street, sunset, food, pets, moon...). Tap the scene chip (top right) to pick one, ✨ for auto, ⭕ for a plain camera. The **?** screen lists every recipe.
+- Auto scene: ML Kit image labeling (on-device, free) plus face detection and the measured light level
+- Real light meter: shutter, ISO and aperture from the camera give the light level (EV), shown under the scene chip. The "too dark" tip now means "this spot needs a higher ISO than the recipe allows".
+- The recipe sets EV compensation and white balance (warm/cool presets), focuses and meters on the face, and uses the recipe's shutter as the slowest allowed (raising ISO instead) when the phone supports manual exposure
+- Tips per scene: green face cast, stricter level for buildings and horizons, zoom suggestions (food, flowers, sunset, moon); no backlight or harsh-light warnings for sunsets
+- Scan also marks down views whose light is too dim for the recipe
+- After the shot the recipe's look is applied (exposure, contrast, highlights, shadows, warmth, tint, saturation, vignette); the preview shows everything except highlights/shadows
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

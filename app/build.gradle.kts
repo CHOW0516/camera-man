@@ -65,4 +65,6 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.7")
     // On-device body pose detection (33 joints), model bundled in the app.
     implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
+    // On-device scene labels ("Food", "Sky", "Building"...) to pick the camera recipe, model bundled in the app.
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 }

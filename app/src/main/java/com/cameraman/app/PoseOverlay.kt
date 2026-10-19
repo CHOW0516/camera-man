@@ -40,6 +40,7 @@ fun PoseOverlay(
     onNextPose: () -> Unit,
     zoom: ZoomInfo?,
     pitchDegrees: Float?,
+    tooDarkForScene: Boolean?,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -65,7 +66,7 @@ fun PoseOverlay(
             Offset(screenPoint.x * screenWidth, screenPoint.y * screenHeight)
         }
         val match = personJoints?.let { matchPose(it, poseToMatch) }
-        val newTip = reading?.let { choosePoseTip(it.frameBrightness, personJoints, standBox, screenWidth, match, zoom, pitchDegrees) }
+        val newTip = reading?.let { choosePoseTip(it.frameBrightness, personJoints, standBox, screenWidth, match, zoom, pitchDegrees, tooDarkForScene) }
         val tipStabilizer = remember { TipStabilizer() }
         val tip = tipStabilizer.update(newTip, hasReading = reading != null)
         BuzzWhenGood(tip?.kind)

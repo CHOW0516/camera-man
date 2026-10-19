@@ -3,6 +3,7 @@ package com.cameraman.app
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import kotlin.math.pow
 
 const val DIRECTION_COUNT = 12
 private const val DEGREES_PER_DIRECTION = 360f / DIRECTION_COUNT
@@ -23,6 +24,10 @@ private const val CLUTTER_WEIGHT = 2f
 private const val PLAIN_WEIGHT = 0.8f
 private const val SYMMETRY_WEIGHT = 0.6f
 private const val LINES_WEIGHT = 0.6f
+private const val RECIPE_LIGHT_WEIGHT = 1.5f
+
+/** Average screen brightness auto exposure aims for (0..255). */
+private const val MID_GREY = 118f
 
 /** Which way the camera points up or down. Down = camera tilted toward the ground. */
 enum class PitchBand { Down, Straight, Up }
@@ -66,8 +71,12 @@ class ScanSession {
 
     val isComplete: Boolean get() = directionsSeen >= DIRECTIONS_NEEDED
 
-    /** Every view seen enough to score, best first. Empty until [isComplete]. */
-    fun ranking(): List<ScanView> {
+    /**
+     * Every view seen enough to score, best first. Empty until [isComplete].
+     * With a [scene] and the [lockedMeter] reading (exposure is locked while scanning), views whose light is
+     * too dim for the scene's recipe lose points.
+     */
+    fun ranking(scene: Scene?, lockedMeter: MeterReading?): List<ScanView> {
         if (!isComplete) return emptyList()
         val scored = mutableListOf<ScanView>()
         for (direction in 0 until DIRECTION_COUNT) {
@@ -76,7 +85,8 @@ class ScanSession {
             for (band in PitchBand.entries) {
                 val view = views[direction][band.ordinal]
                 if (view.frames < MIN_FRAMES_PER_VIEW) continue
-                scored += ScanView(direction, band, view.score(lightOnSubject), view.snapshot)
+                val score = view.score(lightOnSubject) - RECIPE_LIGHT_WEIGHT * recipeDarkness(lightOnSubject, scene, lockedMeter)
+                scored += ScanView(direction, band, score, view.snapshot)
             }
         }
         return scored.sortedByDescending { it.score }
@@ -85,6 +95,15 @@ class ScanSession {
     /** Best score per direction (null when not seen), for coloring the ring. */
     fun directionScores(ranking: List<ScanView>): List<Float?> =
         (0 until DIRECTION_COUNT).map { direction -> ranking.firstOrNull { it.direction == direction }?.score }
+
+    /** 0 when the light on the subject is enough for the recipe, up to 1 when it needs 4× the recipe's ISO or more. */
+    private fun recipeDarkness(lightOnSubject: Float, scene: Scene?, lockedMeter: MeterReading?): Float {
+        if (scene == null || lockedMeter == null) return 0f
+        // Screen brightness follows light roughly to the power 1/2.2, so undo that to compare amounts of light.
+        val lightRatio = (lightOnSubject / MID_GREY).pow(2.2f).coerceAtLeast(0.01f)
+        val isoNeeded = scene.isoNeeded(lockedMeter) / lightRatio
+        return (log2(isoNeeded / scene.maxIso) / 2f).coerceIn(0f, 1f)
+    }
 
     /** Average brightness of a direction over all its views, or null if not seen. */
     private fun directionBrightness(direction: Int): Float? {
