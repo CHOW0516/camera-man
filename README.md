@@ -54,7 +54,8 @@ Tips are drawn, not written: a round icon badge at the top (red = light problem,
 - The recipe sets EV compensation and white balance (warm/cool presets), focuses and meters on the face, and uses the recipe's shutter as the slowest allowed (raising ISO instead) when the phone supports manual exposure
 - Tips per scene: green face cast, stricter level for buildings and horizons, zoom suggestions (food, flowers, sunset, moon); no backlight or harsh-light warnings for sunsets
 - Scan also marks down views whose light is too dim for the recipe
-- After the shot the recipe's look is applied (exposure, contrast, highlights, shadows, warmth, tint, saturation, vignette); the preview shows everything except highlights/shadows
+- After the shot the recipe's look is applied (exposure, brightness, contrast, highlights, shadows, warmth, tint, saturation, vignette, sharpness); the preview shows everything except brightness, highlights, shadows and sharpness
+- Moon, architecture, city night, sun rays, pets, sea, sunset and afterglow use the exact slider values bloggers posted (`editorLook(...)` in `PhotoLook.kt`); new scenes: Fuji film street, afterglow, moody drinks/still life. Stars and fireworks are left out (they need a tripod and long exposures).
 
 ## Get the app
 

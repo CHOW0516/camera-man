@@ -28,7 +28,9 @@ enum class Scene(
     val hasPerson: Boolean = false,
     /** Lines must stay straight (buildings), so the camera must be held level even without a face. */
     val keepLevel: Boolean = false,
-    val look: PhotoLook? = null
+    val look: PhotoLook? = null,
+    /** Shooting advice from the screenshots, shown in the "?" legend. */
+    val tip: String? = null
 ) {
     DaytimePortrait("🧍", "Daytime portrait", 100, 1 / 125f, 5500, -0.3f, hasPerson = true, look = Looks.BrightAiry),
     IndoorPortrait("🛋️", "Indoor portrait", 400, 1 / 125f, 4600, 0f, hasPerson = true, look = Looks.BrightAiry),
@@ -38,25 +40,42 @@ enum class Scene(
     NightPortrait("🌃", "Night portrait", 500, 1 / 30f, 3850, 0f, hasPerson = true, look = Looks.DarkMoody),
     Street("🚶", "Street", 400, 1 / 125f, 5300, 0.3f, look = Looks.VividScene),
     Overcast("☁️", "Overcast street", 400, 1 / 200f, 5200, 0f, look = Looks.BrightAiry),
-    Architecture("🏛️", "Architecture", 200, 1 / 200f, 5100, -0.3f, keepLevel = true, look = Looks.CleanMinimal),
-    Landscape("🏞️", "Landscape", 100, 1 / 200f, 5300, -0.3f, zoom = 1f, keepLevel = true, look = Looks.VividScene),
-    Seaside("🌊", "Seaside", 100, 1 / 1000f, 5200, 0f, keepLevel = true, look = Looks.CleanMinimal),
-    Sunset("🌅", "Sunset", 100, 1 / 800f, 6200, -1f, zoom = 2f, keepLevel = true, look = Looks.WarmGolden),
-    SunRays("✨", "Sun rays", 200, null, 6500, -0.3f, look = Looks.DarkMoody),
+    FilmStreet("🎞️", "Fuji film street", 100, null, null, -0.7f, zoom = 3f, look = Looks.FujiFilm),
+    Architecture("🏛️", "Architecture", 200, 1 / 200f, null, -0.3f, zoom = 3f, keepLevel = true, look = Looks.Architecture),
+    Landscape("🏞️", "Landscape", 100, 1 / 200f, 5400, -0.3f, zoom = 1f, keepLevel = true, look = Looks.VividScene),
+    Seaside("🌊", "Seaside", 100, 1 / 1000f, 5200, 0f, keepLevel = true, look = Looks.Sea, tip = "Put the waves in the foreground"),
+    Sunset(
+        "🌅", "Sunset", 100, 1 / 800f, 6200, -1f, zoom = 2f, keepLevel = true, look = Looks.Sunset,
+        tip = "Meter on the sky beside the sun so the glow doesn't blow out"
+    ),
+    Afterglow(
+        "🌇", "Afterglow (after sunset)", 640, 1 / 30f, 4600, 0f, keepLevel = true, look = Looks.Afterglow,
+        tip = "Shoot when the cloud color is strongest"
+    ),
+    SunRays("✨", "Sun rays", 100, 1 / 250f, 5200, -0.3f, look = Looks.SunRays),
     Vintage("📻", "Vintage", 200, null, 7000, 0f, look = Looks.Vintage),
-    Food("🍜", "Food and dessert", 200, 1 / 100f, 5600, -0.3f, zoom = 2f, look = Looks.BrightAiry),
-    Flowers("🌸", "Flowers", 250, null, 5000, 0f, zoom = 2f, look = Looks.VividScene),
+    // Sources disagree on food EV (Xiaomi −0.3, OPPO +0.3 to +0.7); bright food usually looks better.
+    Food(
+        "🍜", "Food and dessert", 200, 1 / 100f, 5500, 0.3f, zoom = 2f, look = Looks.BrightAiry,
+        tip = "Shoot by a window and let the main dish fill most of the frame"
+    ),
+    Flowers("🌸", "Flowers", 250, 1 / 400f, 5200, 0f, zoom = 2f, look = Looks.VividScene),
     Product("📦", "Still life / product", 100, 1 / 125f, 5500, 0f, look = Looks.CleanMinimal),
-    Pets("🐶", "Pets and kids", 600, 1 / 400f, null, -0.3f, look = Looks.Pet),
-    NightCity("🌆", "Night city", 400, 1 / 15f, 5100, -0.3f, keepLevel = true, look = Looks.DarkMoody),
-    Moon("🌙", "Moon", 100, 1 / 250f, 4800, -2f, zoom = 10f);
+    MoodyStillLife(
+        "☕", "Moody drinks / still life", 400, null, null, -0.7f, zoom = 2.5f, look = Looks.MoodyStillLife,
+        tip = "Plain dark background, zoom 2–3x, lower exposure; triangle, center or diagonal layout"
+    ),
+    Pets("🐶", "Pets and kids", 600, 1 / 400f, null, -0.3f, zoom = 3f, look = Looks.Pet),
+    NightCity("🌆", "Night city", 400, 1 / 15f, 5000, -1f, zoom = 3f, keepLevel = true, look = Looks.NightCity),
+    Moon("🌙", "Moon", 100, 1 / 250f, 4800, -2f, zoom = 10f, look = Looks.Moon);
 
-    /** One line for the "?" legend. */
+    /** Settings line for the "?" legend, plus the shooting tip when there is one. */
     val summary: String
         get() {
             val shutter = slowestShutterSeconds?.let { formatShutter(it) } ?: "auto"
             val whiteBalance = kelvin?.let { "${it}K" } ?: "auto WB"
-            return "$title: ISO ≤ $maxIso, $shutter, $whiteBalance, EV ${formatEv(evCompensation)}"
+            val settings = "$title: ISO ≤ $maxIso, $shutter, $whiteBalance, EV ${formatEv(evCompensation)}"
+            return if (tip == null) settings else "$settings\n$tip"
         }
 
     /**
@@ -102,6 +121,9 @@ private const val RUNS_BEFORE_SCENE_CHANGE = 3
 private const val NIGHT_EV = 5f
 private const val INDOOR_EV = 9f
 
+/** A sunset scene darker than this (EV at ISO 100) is the afterglow once the sun has gone down. */
+private const val AFTERGLOW_EV = 9f
+
 /** Image labels (from ML Kit's built-in list) that point to each scene, checked in this order. */
 private val labelScenes = listOf(
     Scene.Moon to setOf("Moon"),
@@ -134,6 +156,7 @@ fun guessScene(labels: List<String>, hasPerson: Boolean, ev100: Float?): Scene {
     }
     val fromLabels = labelScenes.firstOrNull { (_, names) -> names.any { it in labelSet } }?.first
     if (isNight && fromLabels != Scene.Moon) return Scene.NightCity
+    if (fromLabels == Scene.Sunset && ev100 != null && ev100 < AFTERGLOW_EV) return Scene.Afterglow
     return fromLabels ?: Scene.Street
 }
 
