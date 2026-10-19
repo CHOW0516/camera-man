@@ -26,10 +26,10 @@ private const val LEVEL_TOLERANCE_DEGREES = 5f
 private const val GREEN_CAST_TINT = 8f
 
 /** Scenes where light shining toward the camera is the point (sunset glow, sun rays). */
-private val backlightScenes = setOf(Scene.Sunset, Scene.SunRays)
+private val backlightScenes = setOf(Scene.Sunset, Scene.Afterglow, Scene.SunRays)
 
 /** Scenes where bright spots in the frame are expected (the sun, the moon, city lights). */
-private val brightSpotScenes = setOf(Scene.Sunset, Scene.SunRays, Scene.Moon, Scene.NightCity)
+private val brightSpotScenes = setOf(Scene.Sunset, Scene.Afterglow, Scene.SunRays, Scene.Moon, Scene.NightCity)
 
 enum class TipLevel { Info, Warning, Good }
 
