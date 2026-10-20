@@ -30,6 +30,7 @@ fun CoachOverlay(
     pitchDegrees: Float?,
     scene: Scene?,
     tooDarkForScene: Boolean?,
+    judgement: ViewJudgement?,
     onZoom: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -38,13 +39,19 @@ fun CoachOverlay(
         val faceOnScreen = reading?.faceBox?.let {
             toScreenCoordinates(it, reading.imageAspectRatio, viewAspectRatio, isFrontCamera)
         }
+        val distractionOnScreen = if (reading != null && judgement?.distractionCenter != null) {
+            toScreenPoint(judgement.distractionCenter, reading.imageAspectRatio, viewAspectRatio, isFrontCamera)
+        } else {
+            null
+        }
         val newTip = reading?.let {
             // Mirroring swaps which half of the face is on the left of the screen.
             val leftOnScreen = if (isFrontCamera) it.faceRightBrightness else it.faceLeftBrightness
             val rightOnScreen = if (isFrontCamera) it.faceLeftBrightness else it.faceRightBrightness
             chooseTip(
                 it.frameBrightness, it.highlightFraction, faceOnScreen, it.faceBrightness,
-                leftOnScreen, rightOnScreen, zoom, pitchDegrees, scene, tooDarkForScene, it.faceTint
+                leftOnScreen, rightOnScreen, zoom, pitchDegrees, scene, tooDarkForScene, it.faceTint,
+                judgement?.distraction, distractionOnScreen
             )
         }
         val tipStabilizer = remember { TipStabilizer() }
@@ -93,6 +100,9 @@ fun CoachOverlay(
                         val eyePoint = Offset(faceRect.center.x, faceRect.top + faceRect.height * 0.4f)
                         drawArrow(eyePoint, Offset(eyePoint.x, lineY), GoodGreen, 6.dp.toPx())
                     }
+                }
+                TipKind.Distraction -> tip?.target?.let { target ->
+                    drawDistractionMark(Offset(target.x * size.width, target.y * size.height), dotRadius * 5)
                 }
                 TipKind.LooksGood -> drawSuccessFrame()
                 else -> tip?.let { drawCameraMoveHint(it, zoom) }

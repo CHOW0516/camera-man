@@ -57,6 +57,14 @@ Tips are drawn, not written: a round icon badge at the top (red = light problem,
 - After the shot the recipe's look is applied (exposure, brightness, contrast, highlights, shadows, warmth, tint, saturation, vignette, sharpness); the preview shows everything except brightness, highlights, shadows and sharpness
 - Moon, architecture, city night, sun rays, pets, sea, sunset and afterglow use the exact slider values bloggers posted (`editorLook(...)` in `PhotoLook.kt`); new scenes: Fuji film street, afterglow, moody drinks/still life. Stars and fireworks are left out (they need a tripod and long exposures).
 
+## AI spot finder
+
+- **AI view score** (0–100, ring at the top): two small on-device MediaPipe models judge the view every few frames. An image embedder (MobileNet V3) compares it with 29 influencer reference photos in `assets/references`; a segmenter (DeepLab V3) finds people, cars and clutter. The score adds a clean background, plain areas, straight lines, symmetry and enough light for the recipe.
+- **What's wrong**: a red circle over people, cars or clutter in the background.
+- **Scout mode** (replaces the spin scan): tap the scout button and walk around. The app keeps the 3 best different views with a photo and score. Tap one to find it again: an arrow says which way to turn or tilt, and a match ring turns green when you are back at that view.
+- **Your taste**: **?** → "Add your favorite photos" adds your own photos as references.
+- Optional Gemini: with a key set, a ✦ button in scout mode asks Gemini which kept view is best. Everything else runs offline and free.
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

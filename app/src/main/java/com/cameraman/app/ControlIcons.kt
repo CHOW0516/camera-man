@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 enum class ControlIcon(val meaning: String) {
     Filter("Color filters"),
     Grid("Grid lines on or off"),
-    Scan("Scan: turn around slowly to find the best light"),
+    Scan("Scout: walk around; the app keeps the 3 best views (tap one to find it again)"),
     Pose("Pose guide on or off"),
     Flip("Switch front and back camera")
 }
