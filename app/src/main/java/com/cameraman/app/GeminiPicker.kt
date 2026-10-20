@@ -1,9 +1,11 @@
 package com.cameraman.app
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -12,13 +14,10 @@ private const val GEMINI_MODEL = "gemini-flash-latest"
 private const val GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent"
 private const val TIMEOUT_MILLIS = 15_000
 
-/** How many of the best-scoring views are shown to Gemini. */
-const val GEMINI_CANDIDATES = 3
-
 private const val PREFERENCES = "camera_man"
 private const val KEY_GEMINI = "gemini_api_key"
 
-private fun prompt(sceneTitle: String) = """These photos are views from one spot, numbered in order starting at 1.
+private fun prompt(sceneTitle: String) = """These photos are views found while walking around, numbered in order starting at 1.
 The photo will be an influencer-style "$sceneTitle" shot. If it has a person, they stand in front of the camera
 with the view behind them.
 Pick the view that makes the best background: clean and not messy, with clear structure
@@ -37,7 +36,7 @@ fun saveGeminiKey(context: Context, key: String) {
  * or null when the call fails (no network, bad key, quota used up, odd answer).
  * Blocks while waiting, so call it off the main thread.
  */
-fun askGeminiForBestView(apiKey: String, views: List<ScanView>, sceneTitle: String): Int? {
+fun askGeminiForBestView(apiKey: String, views: List<ScoutView>, sceneTitle: String): Int? {
     return try {
         requestBestView(apiKey, views, sceneTitle)
     } catch (exception: Exception) {
@@ -45,10 +44,12 @@ fun askGeminiForBestView(apiKey: String, views: List<ScanView>, sceneTitle: Stri
     }
 }
 
-private fun requestBestView(apiKey: String, views: List<ScanView>, sceneTitle: String): Int? {
+private fun requestBestView(apiKey: String, views: List<ScoutView>, sceneTitle: String): Int? {
     val parts = JSONArray().put(JSONObject().put("text", prompt(sceneTitle)))
     for (view in views) {
-        val jpeg = view.snapshot?.jpeg ?: return null
+        val stream = ByteArrayOutputStream()
+        view.bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+        val jpeg = stream.toByteArray()
         parts.put(
             JSONObject().put(
                 "inline_data",

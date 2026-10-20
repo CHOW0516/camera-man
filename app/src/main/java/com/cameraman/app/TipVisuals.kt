@@ -1,5 +1,9 @@
 package com.cameraman.app
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -50,6 +54,9 @@ import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+
+/** Most photos the user can add as references at once. */
+private const val MAX_REFERENCE_PICKS = 20
 
 val WarningRed = Color(0xFFE53935)
 val GoodGreen = Color(0xFF43A047)
@@ -165,6 +172,12 @@ fun pulsingRadius(base: Float): Float {
     return base * scale
 }
 
+/** Red see-through circle over people, cars or clutter in the background. */
+fun DrawScope.drawDistractionMark(center: Offset, radius: Float) {
+    drawCircle(WarningRed.copy(alpha = 0.3f), radius, center)
+    drawCircle(WarningRed, radius, center, style = Stroke(3.dp.toPx()))
+}
+
 /** Draws the icon for [kind], fitting in a square of [iconSize] around [center]. */
 fun DrawScope.drawTipIcon(kind: TipKind, center: Offset, iconSize: Float, color: Color = Color.White) {
     val half = iconSize / 2
@@ -181,6 +194,11 @@ fun DrawScope.drawTipIcon(kind: TipKind, center: Offset, iconSize: Float, color:
             // Sun behind a dark person.
             drawSun(center + Offset(half * 0.35f, -half * 0.35f), half * 0.35f, half * 0.6f, LightYellow, stroke)
             drawPerson(center + Offset(-half * 0.2f, half * 0.15f), iconSize * 0.7f, Color.Black, filled = true)
+        }
+        TipKind.Distraction -> {
+            // Person crossed out in red.
+            drawPerson(center, iconSize * 0.8f, color, filled = false, strokeWidth = stroke)
+            drawLine(WarningRed, center + Offset(-half, half), center + Offset(half, -half), stroke * 1.5f, cap = StrokeCap.Round)
         }
         TipKind.GreenCast -> {
             // Person tinted green, with a leaf above.
@@ -307,8 +325,11 @@ private fun DrawScope.drawPerson(center: Offset, height: Float, color: Color, fi
 
 /** Small "?" button that opens a list of what each icon means. */
 @Composable
-fun LegendButton(modifier: Modifier = Modifier) {
+fun LegendButton(onAddReferences: (List<Uri>) -> Unit, modifier: Modifier = Modifier) {
     var isOpen by remember { mutableStateOf(false) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_REFERENCE_PICKS)) { uris ->
+        if (uris.isNotEmpty()) onAddReferences(uris)
+    }
     TextButton(
         onClick = { isOpen = true },
         modifier = modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
@@ -355,6 +376,17 @@ fun LegendButton(modifier: Modifier = Modifier) {
                         Text(scene.summary, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp))
                     }
                 }
+                Text(
+                    "The score compares each view with influencer photos. Add photos you love to teach it your taste:",
+                    color = Color.White,
+                    fontSize = 13.sp
+                )
+                TextButton(
+                    onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    modifier = Modifier.background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                ) {
+                    Text("+ Add your favorite photos", color = Color.White)
+                }
                 GeminiKeyField()
                 TextButton(onClick = { isOpen = false }, modifier = Modifier.align(Alignment.End)) {
                     Text("OK", color = Color.White)
@@ -364,14 +396,14 @@ fun LegendButton(modifier: Modifier = Modifier) {
     }
 }
 
-/** Lets the user paste a free Gemini API key; scan mode then asks Gemini to pick between the best views. */
+/** Lets the user paste a free Gemini API key; scout mode can then ask Gemini to pick between the best views. */
 @Composable
 private fun GeminiKeyField() {
     val context = LocalContext.current
     var key by remember { mutableStateOf(loadGeminiKey(context) ?: "") }
     Text(
-        "Optional: paste a free Gemini key (aistudio.google.com) and scan will also ask Gemini to pick the best view. " +
-            "Scan photos are then sent to Google.",
+        "Optional: paste a free Gemini key (aistudio.google.com) and scout mode shows a ✦ button to ask Gemini " +
+            "which kept view is best. Only then are those small photos sent to Google.",
         color = Color.White,
         fontSize = 13.sp
     )
