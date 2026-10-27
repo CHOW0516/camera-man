@@ -67,9 +67,8 @@ import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.text.SimpleDateFormat
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
-
-private const val EXPOSURE_SETTLE_MILLIS = 800L
 
 /** Wait after switching to a recipe's manual shutter, so the sensor has changed before the photo is taken. */
 private const val MANUAL_SETTLE_MILLIS = 300L
@@ -85,10 +84,13 @@ fun CameraScreen() {
     var useFrontCamera by remember { mutableStateOf(false) }
     var showGrid by remember { mutableStateOf(true) }
     var frameReading by remember { mutableStateOf<FrameReading?>(null) }
-    var scanSession by remember { mutableStateOf<ScanSession?>(null) }
-    var scanTarget by remember { mutableStateOf<ScanTarget?>(null) }
-    var directionScores by remember { mutableStateOf<List<Float?>>(emptyList()) }
+    var scoutSession by remember { mutableStateOf<ScoutSession?>(null) }
+    var selectedView by remember { mutableStateOf<ScoutView?>(null) }
+    var aiPick by remember { mutableStateOf<ScoutView?>(null) }
     var askingAi by remember { mutableStateOf(false) }
+    var viewJudge by remember { mutableStateOf<ViewJudge?>(null) }
+    var lastJudgement by remember { mutableStateOf<ViewJudgement?>(null) }
+    var liveScore by remember { mutableStateOf<Int?>(null) }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var zoomRatio by remember { mutableFloatStateOf(1f) }
     var poseMode by remember { mutableStateOf(false) }
@@ -108,7 +110,8 @@ fun CameraScreen() {
     val sceneDetector = remember { SceneDetector() }
     var lastFaceFocusMillis by remember { mutableLongStateOf(0L) }
     val coroutineScope = rememberCoroutineScope()
-    val heading = rememberHeadingDegrees(enabled = scanSession != null)
+    val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
+    val heading = rememberHeadingDegrees(enabled = scoutSession != null)
     val phoneTilt = rememberPhoneTilt()
     val latestTilt = rememberUpdatedState(phoneTilt)
 
@@ -121,37 +124,27 @@ fun CameraScreen() {
         currentCamera.cameraControl.setZoomRatio(zoomRatio)
     }
 
-    fun stopScan() {
-        scanSession = null
-        scanTarget = null
+    fun stopScout() {
+        scoutSession = null
+        selectedView = null
+        aiPick = null
         askingAi = false
-        directionScores = emptyList()
     }
 
-    /** Called once the scan has seen enough: picks the target, asking Gemini when a key is set. */
-    fun finishScan(session: ScanSession) {
-        val ranking = session.ranking(activeScene, lightMeter.latest)
-        val best = ranking.firstOrNull() ?: return
-        directionScores = session.directionScores(ranking)
-        val localPick = ScanTarget(best.headingDegrees, best.band, pickedByAi = false)
-        val apiKey = loadGeminiKey(context)
-        val candidates = ranking.distinctBy { it.direction }.filter { it.snapshot != null }.take(GEMINI_CANDIDATES)
-        if (apiKey == null || candidates.size < 2) {
-            scanTarget = localPick
-            return
-        }
+    /** Asks Gemini which of the kept views is best (only when the user set a key). */
+    fun askAi(session: ScoutSession) {
+        val apiKey = loadGeminiKey(context) ?: return
+        val views = session.bestViews
+        if (views.size < 2) return
         askingAi = true
-        val mainExecutor = ContextCompat.getMainExecutor(context)
         thread {
-            val choice = askGeminiForBestView(apiKey, candidates, activeScene?.title ?: "portrait")
+            val choice = askGeminiForBestView(apiKey, views, activeScene?.title ?: "photo")
             mainExecutor.execute {
-                // Ignore the answer if the user closed or restarted the scan meanwhile.
-                if (scanSession !== session) return@execute
+                // Ignore the answer if the user closed or restarted scouting meanwhile.
+                if (scoutSession !== session) return@execute
                 askingAi = false
-                scanTarget = choice?.let {
-                    val view = candidates[it]
-                    ScanTarget(view.headingDegrees, view.band, pickedByAi = true)
-                } ?: localPick
+                aiPick = choice?.let { views.getOrNull(it) }
+                if (aiPick == null) Toast.makeText(context, "Gemini did not answer", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -185,20 +178,18 @@ fun CameraScreen() {
                 .build()
         )
         val imageLabeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
-        val mainExecutor = ContextCompat.getMainExecutor(context)
         val analyzer = SceneAnalyzer(faceDetector, poseDetector, imageLabeler) { reading ->
             mainExecutor.execute {
                 frameReading = reading
                 meterReading = lightMeter.latest
-                val session = scanSession
-                // The scene stays fixed while scanning, so the exposure lock is not reset.
-                if (reading.labels != null && session == null) {
+                val scout = scoutSession
+                if (reading.labels != null) {
                     val hasPerson = poseMode || reading.faceBox != null || reading.bodyPoints != null
                     detectedScene = sceneDetector.update(guessScene(reading.labels, hasPerson, lightMeter.latest?.ev100))
                 }
                 val currentCamera = camera
                 val now = SystemClock.elapsedRealtime()
-                if (reading.faceBox != null && session == null && latestScene.value != null && currentCamera != null &&
+                if (reading.faceBox != null && scout == null && latestScene.value != null && currentCamera != null &&
                     now - lastFaceFocusMillis > FACE_FOCUS_EVERY_MILLIS && previewView.height > 0
                 ) {
                     lastFaceFocusMillis = now
@@ -208,18 +199,43 @@ fun CameraScreen() {
                         toScreenCoordinates(reading.faceBox, reading.imageAspectRatio, viewAspectRatio, useFrontCamera)
                     )
                 }
-                val currentHeading = heading.value
-                val currentPitch = latestTilt.value?.pitchDegrees
-                if (session != null && !session.isComplete && currentHeading != null && currentPitch != null) {
-                    session.record(currentHeading, currentPitch, reading)
-                    if (session.isComplete) finishScan(session)
+                val judgement = reading.judgement
+                if (judgement != null) {
+                    lastJudgement = judgement
+                    val tooDark = latestScene.value?.let { scene -> lightMeter.latest?.let { scene.isTooDark(it) } } ?: false
+                    val score = spotScore(judgement, reading, tooDark)
+                    liveScore = score
+                    if (scout != null && reading.viewBitmap != null) {
+                        scout.offer(ScoutView(reading.viewBitmap, score, judgement.embedding, heading.value, latestTilt.value?.pitchDegrees))
+                    }
                 }
             }
         }
         imageAnalysis.setAnalyzer(analysisExecutor, analyzer)
         sceneAnalyzer = analyzer
+        // The AI models take a moment to load; the camera works without them meanwhile.
+        val isDisposed = AtomicBoolean(false)
+        thread {
+            val judge = try {
+                ViewJudge(context).also { it.loadReferences(context) }
+            } catch (exception: Exception) {
+                mainExecutor.execute {
+                    Toast.makeText(context, "AI view score not available: ${exception.message}", Toast.LENGTH_LONG).show()
+                }
+                null
+            }
+            if (judge != null && isDisposed.get()) {
+                judge.close()
+            } else if (judge != null) {
+                analyzer.viewJudge = judge
+                mainExecutor.execute { viewJudge = judge }
+            }
+        }
         onDispose {
+            isDisposed.set(true)
             imageAnalysis.clearAnalyzer()
+            // Closed on the analysis thread, after the frame it may be judging.
+            analysisExecutor.execute { analyzer.viewJudge?.close() }
             faceDetector.close()
             poseDetector.close()
             imageLabeler.close()
@@ -232,17 +248,16 @@ fun CameraScreen() {
         previewView.setLayerType(if (paint == null) View.LAYER_TYPE_NONE else View.LAYER_TYPE_HARDWARE, paint)
     }
 
+    LaunchedEffect(sceneAnalyzer, scoutSession, activeScene) {
+        sceneAnalyzer?.scouting = scoutSession != null
+        sceneAnalyzer?.judgeScene = activeScene
+    }
+
     // Applies the scene recipe's exposure compensation and white balance.
-    // While scanning: keep small snapshots for Gemini, and lock the exposure so the camera stops
-    // brightening dark directions and darkening bright ones (otherwise every direction looks the same).
-    LaunchedEffect(sceneAnalyzer, camera, scanSession, activeScene) {
-        val scanning = scanSession != null
-        sceneAnalyzer?.takeSnapshots = scanning
+    LaunchedEffect(camera, activeScene) {
         val currentCamera = camera ?: return@LaunchedEffect
         setEvCompensation(currentCamera, activeScene?.evCompensation ?: 0f)
-        // Give auto exposure a moment to settle (the camera may have just switched) before locking it.
-        if (scanning) delay(EXPOSURE_SETTLE_MILLIS)
-        applyCameraOptions(currentCamera, activeScene?.whiteBalanceMode(), exposureLocked = scanning, manual = null)
+        applyCameraOptions(currentCamera, activeScene?.whiteBalanceMode(), manual = null)
     }
 
     /** Takes a photo with the scene's look; uses the recipe's shutter when auto would pick a slower one. */
@@ -251,7 +266,7 @@ fun CameraScreen() {
         val look = scene?.look
         val currentCamera = camera
         val meter = lightMeter.latest
-        val manual = if (scene != null && currentCamera != null && meter != null && scanSession == null) {
+        val manual = if (scene != null && currentCamera != null && meter != null) {
             manualExposureFor(currentCamera, scene, meter)
         } else {
             null
@@ -261,11 +276,11 @@ fun CameraScreen() {
             return
         }
         val whiteBalance = scene.whiteBalanceMode()
-        applyCameraOptions(currentCamera, whiteBalance, exposureLocked = false, manual = manual)
+        applyCameraOptions(currentCamera, whiteBalance, manual = manual)
         coroutineScope.launch {
             delay(MANUAL_SETTLE_MILLIS)
             takePhoto(context, imageCapture, photoFilter, look, onDone = {
-                applyCameraOptions(currentCamera, whiteBalance, exposureLocked = false, manual = null)
+                applyCameraOptions(currentCamera, whiteBalance, manual = null)
             })
         }
     }
@@ -325,7 +340,7 @@ fun CameraScreen() {
 
         if (showGrid) GridOverlay(modifier = Modifier.fillMaxSize())
         LevelIndicator(tilt = phoneTilt, modifier = Modifier.fillMaxSize())
-        val session = scanSession
+        val scout = scoutSession
         val tooDarkForScene = activeScene?.let { scene -> meterReading?.let { scene.isTooDark(it) } }
         if (poseMode) {
             PoseOverlay(
@@ -339,7 +354,7 @@ fun CameraScreen() {
                 onZoom = ::setZoom,
                 modifier = Modifier.fillMaxSize()
             )
-        } else if (session == null) {
+        } else if (scout == null) {
             CoachOverlay(
                 reading = frameReading,
                 isFrontCamera = useFrontCamera,
@@ -347,23 +362,49 @@ fun CameraScreen() {
                 pitchDegrees = phoneTilt?.pitchDegrees,
                 scene = activeScene,
                 tooDarkForScene = tooDarkForScene,
+                judgement = lastJudgement,
                 onZoom = ::setZoom,
                 modifier = Modifier.fillMaxSize()
             )
+            ScoreRing(
+                liveScore,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            )
         } else {
-            ScanOverlay(
-                session = session,
+            ScoutOverlay(
+                session = scout,
+                liveScore = liveScore,
+                selected = selectedView,
                 heading = heading.value,
                 pitchDegrees = phoneTilt?.pitchDegrees,
-                directionScores = directionScores,
-                target = scanTarget,
+                currentEmbedding = lastJudgement?.embedding,
+                aiPick = aiPick,
                 askingAi = askingAi,
-                onClose = ::stopScan,
+                canAskAi = loadGeminiKey(context) != null && scout.bestViews.size >= 2,
+                onAskAi = { askAi(scout) },
+                onSelect = { selectedView = it },
+                onClose = ::stopScout,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
         }
 
         LegendButton(
+            onAddReferences = { uris ->
+                thread {
+                    val saved = saveReferencePhotos(context, uris)
+                    try {
+                        viewJudge?.loadReferences(context)
+                    } catch (exception: Exception) {
+                        // Keeps the old references; the new photos are used next time the app starts.
+                    }
+                    mainExecutor.execute {
+                        Toast.makeText(context, "Added $saved photos to compare with", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
@@ -423,12 +464,15 @@ fun CameraScreen() {
                     onClick = { showFilters = !showFilters }
                 )
                 ControlButton(ControlIcon.Grid, active = showGrid, onClick = { showGrid = !showGrid })
-                ControlButton(ControlIcon.Scan, active = scanSession != null, onClick = {
-                    // Scan looks at the scene, so it always uses the back camera.
-                    useFrontCamera = false
-                    poseMode = false
-                    stopScan()
-                    scanSession = ScanSession()
+                ControlButton(ControlIcon.Scan, active = scoutSession != null, onClick = {
+                    if (scoutSession != null) {
+                        stopScout()
+                    } else {
+                        // Scouting looks at the scene, so it always uses the back camera.
+                        useFrontCamera = false
+                        poseMode = false
+                        scoutSession = ScoutSession()
+                    }
                 })
                 Box(
                     modifier = Modifier
@@ -440,7 +484,7 @@ fun CameraScreen() {
                 )
                 ControlButton(ControlIcon.Pose, active = poseMode, onClick = {
                     poseMode = !poseMode
-                    stopScan()
+                    stopScout()
                 })
                 ControlButton(ControlIcon.Flip, active = useFrontCamera, onClick = { useFrontCamera = !useFrontCamera })
             }

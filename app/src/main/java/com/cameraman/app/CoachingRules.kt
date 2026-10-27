@@ -22,6 +22,9 @@ const val TILT_TOLERANCE_DEGREES = 12f
 /** Tighter tilt limit for scenes with straight lines (buildings, horizons), so walls don't lean. */
 private const val LEVEL_TOLERANCE_DEGREES = 5f
 
+/** People, cars or clutter covering more than this share of the view get a "distraction" tip. */
+private const val DISTRACTION_FRACTION = 0.04f
+
 /** Face color cast above this counts as a green cast. Starting value; tune on a phone. */
 private const val GREEN_CAST_TINT = 8f
 
@@ -42,6 +45,7 @@ enum class TipKind(val level: TipLevel, val meaning: String) {
     TooDark(TipLevel.Warning, "Too dark for this scene's recipe: move to more light or face a window"),
     Backlit(TipLevel.Warning, "Backlit: turn so the light is on the face"),
     HarshLight(TipLevel.Warning, "Harsh light: find shade or turn away from the sun"),
+    Distraction(TipLevel.Warning, "Red circle: people, cars or clutter in the background; move, turn or wait"),
     GreenCast(TipLevel.Warning, "Green face: light bouncing off trees or grass, move into open light"),
     SideLight(TipLevel.Info, "Half the face in shadow: turn toward the yellow arrow"),
     StepCloser(TipLevel.Info, "Arrows pointing out: come closer"),
@@ -124,6 +128,7 @@ private fun sceneTip(scene: Scene?, zoom: ZoomInfo?, pitchDegrees: Float?): Tip?
  * [faceBox] is in screen coordinates (0..1 of the preview), already mirrored for the front camera,
  * and [faceLeftBrightness] / [faceRightBrightness] are the left and right halves of the face as seen on screen.
  * [tooDarkForScene] comes from the light meter (null when it has no reading yet: then brightness is used).
+ * [distraction] is the share of the view covered by people, cars or clutter, centered at [distractionOnScreen].
  */
 fun chooseTip(
     frameBrightness: Float,
@@ -136,7 +141,9 @@ fun chooseTip(
     pitchDegrees: Float?,
     scene: Scene?,
     tooDarkForScene: Boolean?,
-    faceTint: Float?
+    faceTint: Float?,
+    distraction: Float?,
+    distractionOnScreen: PointF?
 ): Tip? {
     val tooDark = tooDarkForScene ?: (frameBrightness < TOO_DARK_BRIGHTNESS)
     if (tooDark && scene != Scene.Moon) {
@@ -152,6 +159,9 @@ fun chooseTip(
     }
     if (faceBox != null && faceTint != null && faceTint > GREEN_CAST_TINT) {
         return Tip(TipKind.GreenCast)
+    }
+    if (distraction != null && distraction > DISTRACTION_FRACTION && distractionOnScreen != null) {
+        return Tip(TipKind.Distraction, target = distractionOnScreen)
     }
     if (faceBox != null && faceLeftBrightness != null && faceRightBrightness != null) {
         val difference = faceRightBrightness - faceLeftBrightness

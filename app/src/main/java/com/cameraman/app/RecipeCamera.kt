@@ -55,13 +55,12 @@ fun previewWithMeter(lightMeter: LightMeter): Preview {
 data class ManualExposure(val exposureSeconds: Float, val iso: Int)
 
 /**
- * Sets the Camera2 options the app controls: the recipe's white balance preset, the exposure lock used by
- * scan mode, and a manual shutter/ISO while a recipe photo is taken. Replaces any options set before.
+ * Sets the Camera2 options the app controls: the recipe's white balance preset, and a manual shutter/ISO
+ * while a recipe photo is taken. Replaces any options set before.
  */
 @OptIn(ExperimentalCamera2Interop::class)
-fun applyCameraOptions(camera: Camera, whiteBalanceMode: Int?, exposureLocked: Boolean, manual: ManualExposure?) {
+fun applyCameraOptions(camera: Camera, whiteBalanceMode: Int?, manual: ManualExposure?) {
     val options = CaptureRequestOptions.Builder()
-    if (exposureLocked) options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
     val availableModes = Camera2CameraInfo.from(camera.cameraInfo)
         .getCameraCharacteristic(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
     if (whiteBalanceMode != null && availableModes?.contains(whiteBalanceMode) == true) {

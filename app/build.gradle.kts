@@ -45,6 +45,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // MediaPipe reads the models straight from the APK, so they must not be compressed.
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -67,4 +72,6 @@ dependencies {
     implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
     // On-device scene labels ("Food", "Sky", "Building"...) to pick the camera recipe, model bundled in the app.
     implementation("com.google.mlkit:image-labeling:17.0.9")
+    // On-device view scoring: image embedder (compare with reference photos) and segmenter (find distractions).
+    implementation("com.google.mediapipe:tasks-vision:0.10.21")
 }

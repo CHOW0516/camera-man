@@ -11,7 +11,6 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.pose.PoseDetector
-import java.io.ByteArrayOutputStream
 import kotlin.math.abs
 
 private const val GRID_COLUMNS = 48
@@ -24,9 +23,9 @@ private const val PLAIN_STEP = 6
 /** A brightness jump at least this big counts as part of a sharp line. */
 private const val LINE_STEP = 25
 
-/** Snapshots for the scan are taken every this many frames, and sized to this many pixels across. */
-private const val SNAPSHOT_EVERY_FRAMES = 4
-private const val SNAPSHOT_WIDTH = 320
+/** The AI models judge the view every this many frames, on a copy this many pixels across. */
+private const val JUDGE_EVERY_FRAMES = 8
+private const val VIEW_SIZE = 256
 
 /** Image labels (what is in the scene) are found every this many frames, and kept when at least this sure. */
 private const val LABEL_EVERY_FRAMES = 10
@@ -34,9 +33,6 @@ private const val MIN_LABEL_CONFIDENCE = 0.6f
 
 /** Where the person will stand in a scanned view: the middle of the frame. */
 private val SUBJECT_AREA = RectF(0.3f, 0.2f, 0.7f, 0.95f)
-
-/** A small JPEG of one frame, kept by scan mode to show Gemini the best views. */
-class Snapshot(val jpeg: ByteArray)
 
 /**
  * What one camera frame tells us, in upright image coordinates (0..1, not mirrored).
@@ -61,8 +57,10 @@ data class FrameReading(
     val symmetry: Float = 0f,
     /** 0..1: length of the longest straight vertical or horizontal line, as a share of the view. */
     val lineStrength: Float = 0f,
-    /** Only taken while [SceneAnalyzer.takeSnapshots] is on, every few frames. */
-    val snapshot: Snapshot? = null,
+    /** What the AI models think of the view; only set every few frames (with [viewBitmap]), null otherwise. */
+    val judgement: ViewJudgement? = null,
+    /** Small upright copy of the frame that was judged; scout mode keeps the best ones. */
+    val viewBitmap: Bitmap? = null,
     /** What ML Kit sees in the scene ("Food", "Sky"...); only set every few frames, null otherwise. */
     val labels: List<String>? = null,
     /** Color cast on the face: positive = green (light bouncing off trees or grass), negative = magenta. */
@@ -88,9 +86,17 @@ class SceneAnalyzer(
     @Volatile
     var usePoseDetection = false
 
-    /** Set while scanning, so the best views can be shown to Gemini. */
+    /** Set once the AI models have loaded (they load in the background); null until then. */
     @Volatile
-    var takeSnapshots = false
+    var viewJudge: ViewJudge? = null
+
+    /** Scene in use, so the judge knows whether bottles and chairs are clutter. */
+    @Volatile
+    var judgeScene: Scene? = null
+
+    /** True while scouting: nobody is being photographed yet, so every person in view is a distraction. */
+    @Volatile
+    var scouting = false
 
     private var frameNumber = 0
 
@@ -111,10 +117,18 @@ class SceneAnalyzer(
 
         val inputImage = InputImage.fromMediaImage(mediaImage, rotationDegrees)
         frameNumber++
-        val snapshot = if (takeSnapshots && frameNumber % SNAPSHOT_EVERY_FRAMES == 0) {
-            takeSnapshot(imageProxy, rotationDegrees)
+        val judge = viewJudge
+        val viewBitmap = if (judge != null && frameNumber % JUDGE_EVERY_FRAMES == 0) {
+            smallUprightBitmap(imageProxy, rotationDegrees)
         } else {
             null
+        }
+        val judgement = viewBitmap?.let {
+            try {
+                judge?.judge(it, hasSubject = !scouting, scene = judgeScene)
+            } catch (exception: Exception) {
+                null
+            }
         }
 
         fun report(faceBox: RectF?, bodyPoints: Map<Joint, PointF>?, labels: List<String>?) {
@@ -137,7 +151,8 @@ class SceneAnalyzer(
                     plainFraction = lumaGrid.plainFraction(PLAIN_STEP),
                     symmetry = lumaGrid.symmetry(),
                     lineStrength = lumaGrid.lineStrength(LINE_STEP),
-                    snapshot = snapshot,
+                    judgement = judgement,
+                    viewBitmap = viewBitmap,
                     labels = labels,
                     // Green has both color values below the middle (128), magenta both above.
                     faceTint = faceBox?.let { 128f - (blueGrid.averageBrightness(it) + redGrid.averageBrightness(it)) / 2 }
@@ -192,20 +207,17 @@ class SceneAnalyzer(
         }
     }
 
-    /** A small upright JPEG of the frame. Returns null if the frame could not be converted. */
-    private fun takeSnapshot(imageProxy: ImageProxy, rotationDegrees: Int): Snapshot? = try {
+    /** A small upright copy of the frame. Returns null if the frame could not be converted. */
+    private fun smallUprightBitmap(imageProxy: ImageProxy, rotationDegrees: Int): Bitmap? = try {
         val frame = imageProxy.toBitmap()
-        val scale = SNAPSHOT_WIDTH.toFloat() / maxOf(frame.width, frame.height)
+        val scale = VIEW_SIZE.toFloat() / maxOf(frame.width, frame.height)
         val matrix = Matrix().apply {
             postScale(scale, scale)
             postRotate(rotationDegrees.toFloat())
         }
         val small = Bitmap.createBitmap(frame, 0, 0, frame.width, frame.height, matrix, true)
-        val stream = ByteArrayOutputStream()
-        small.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-        small.recycle()
-        frame.recycle()
-        Snapshot(stream.toByteArray())
+        if (small !== frame) frame.recycle()
+        small
     } catch (exception: Exception) {
         null
     }
