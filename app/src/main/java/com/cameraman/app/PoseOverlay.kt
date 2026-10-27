@@ -2,7 +2,16 @@ package com.cameraman.app
 
 import android.graphics.PointF
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -31,13 +40,20 @@ private const val STAND_BOX_CENTER_X = 2f / 3
 private const val STAND_BOX_TOP = 0.18f
 private const val STAND_BOX_BOTTOM = 0.88f
 
+/** How far a finger must slide on the pose card to change the pose. */
+private val SWIPE_DISTANCE = 40.dp
+
 /** Shows where to stand, the target pose outline, the person's skeleton, the match score and a tip. */
 @Composable
 fun PoseOverlay(
     reading: FrameReading?,
     isFrontCamera: Boolean,
     targetPose: TargetPose,
+    poseNumber: Int,
+    poseCount: Int,
+    isSuggested: Boolean,
     onNextPose: () -> Unit,
+    onPreviousPose: () -> Unit,
     zoom: ZoomInfo?,
     pitchDegrees: Float?,
     tooDarkForScene: Boolean?,
@@ -57,9 +73,11 @@ fun PoseOverlay(
             right = STAND_BOX_CENTER_X * screenWidth + boxWidth / 2,
             bottom = STAND_BOX_BOTTOM * screenHeight
         )
-        val targetJoints = stickFigure(targetPose, standBox, mirrored = isFrontCamera)
-        // The selfie preview is a mirror image, so the person copies a mirrored pose.
-        val poseToMatch = if (isFrontCamera) targetPose.mirrored() else targetPose
+        // The selfie preview is a mirror image, and a back-view pose swaps left and right too,
+        // so in either case (but not both) the person copies a mirrored pose.
+        val mirror = isFrontCamera != targetPose.facingAway
+        val targetJoints = stickFigure(targetPose, standBox, mirrored = mirror)
+        val poseToMatch = if (mirror) targetPose.mirrored() else targetPose
 
         val personJoints = reading?.bodyPoints?.mapValues { (_, imagePoint) ->
             val screenPoint = toScreenPoint(PointF(imagePoint.x, imagePoint.y), reading.imageAspectRatio, viewAspectRatio, isFrontCamera)
@@ -133,6 +151,57 @@ fun PoseOverlay(
                 Text("›", color = Color.White, fontSize = 32.sp)
             }
         }
+        PoseCard(
+            name = targetPose.name,
+            poseNumber = poseNumber,
+            poseCount = poseCount,
+            isSuggested = isSuggested,
+            onNext = onNextPose,
+            onPrevious = onPreviousPose,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 210.dp)
+        )
+    }
+}
+
+/**
+ * The pose's name with ✨ and "1/3" when it is suggested for this scene. Swipe left or right for the next or
+ * previous pose.
+ */
+@Composable
+private fun PoseCard(
+    name: String,
+    poseNumber: Int,
+    poseCount: Int,
+    isSuggested: Boolean,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var dragTotal by remember { mutableFloatStateOf(0f) }
+    val label = if (isSuggested) "✨ $poseNumber/${minOf(poseCount, SUGGESTED_POSE_COUNT)}" else "$poseNumber/$poseCount"
+    Row(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { dragTotal = 0f },
+                    onDragEnd = {
+                        if (dragTotal < -SWIPE_DISTANCE.toPx()) onNext()
+                        if (dragTotal > SWIPE_DISTANCE.toPx()) onPrevious()
+                    },
+                    onHorizontalDrag = { _, dragAmount -> dragTotal += dragAmount }
+                )
+            }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("‹", color = Color.White.copy(alpha = 0.6f), fontSize = 20.sp)
+        Text(label, color = if (isSuggested) LightYellow else Color.White, fontSize = 14.sp)
+        Text(name, color = Color.White, fontSize = 16.sp)
+        Text("›", color = Color.White.copy(alpha = 0.6f), fontSize = 20.sp)
     }
 }
 
