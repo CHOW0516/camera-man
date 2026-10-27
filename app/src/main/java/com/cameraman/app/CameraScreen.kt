@@ -108,12 +108,21 @@ fun CameraScreen() {
     val lightMeter = remember { LightMeter() }
     var meterReading by remember { mutableStateOf<MeterReading?>(null) }
     val sceneDetector = remember { SceneDetector() }
+    // The place around the person (street, sea, café...), ignoring the person, to suggest poses.
+    val placeDetector = remember { SceneDetector() }
+    var detectedPlace by remember { mutableStateOf<Scene?>(null) }
     var lastFaceFocusMillis by remember { mutableLongStateOf(0L) }
     val coroutineScope = rememberCoroutineScope()
     val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
     val heading = rememberHeadingDegrees(enabled = scoutSession != null)
     val phoneTilt = rememberPhoneTilt()
     val latestTilt = rememberUpdatedState(phoneTilt)
+
+    // A scene the user picked by hand is also the place; in auto mode the place comes from what is around the person.
+    val posePlace = if (autoScene) detectedPlace else pickedScene
+    val poseChoices = remember(posePlace, activeScene) { posesFor(posePlace, activeScene) }
+    // A new place or scene starts again from its best pose.
+    LaunchedEffect(poseChoices.first()) { poseIndex = 0 }
 
     val zoomState = camera?.cameraInfo?.zoomState?.value
     val zoom = zoomState?.let { ZoomInfo(zoomRatio, it.minZoomRatio, it.maxZoomRatio) }
@@ -186,6 +195,7 @@ fun CameraScreen() {
                 if (reading.labels != null) {
                     val hasPerson = poseMode || reading.faceBox != null || reading.bodyPoints != null
                     detectedScene = sceneDetector.update(guessScene(reading.labels, hasPerson, lightMeter.latest?.ev100))
+                    detectedPlace = placeDetector.update(guessScene(reading.labels, hasPerson = false, lightMeter.latest?.ev100))
                 }
                 val currentCamera = camera
                 val now = SystemClock.elapsedRealtime()
@@ -346,8 +356,12 @@ fun CameraScreen() {
             PoseOverlay(
                 reading = frameReading,
                 isFrontCamera = useFrontCamera,
-                targetPose = poseLibrary[poseIndex],
-                onNextPose = { poseIndex = (poseIndex + 1) % poseLibrary.size },
+                targetPose = poseChoices[poseIndex],
+                poseNumber = poseIndex + 1,
+                poseCount = poseChoices.size,
+                isSuggested = poseIndex < SUGGESTED_POSE_COUNT && isSuggested(poseChoices[poseIndex], posePlace, activeScene),
+                onNextPose = { poseIndex = (poseIndex + 1) % poseChoices.size },
+                onPreviousPose = { poseIndex = (poseIndex - 1 + poseChoices.size) % poseChoices.size },
                 zoom = zoom,
                 pitchDegrees = phoneTilt?.pitchDegrees,
                 tooDarkForScene = tooDarkForScene,

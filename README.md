@@ -65,6 +65,11 @@ Tips are drawn, not written: a round icon badge at the top (red = light problem,
 - **Your taste**: **?** → "Add your favorite photos" adds your own photos as references.
 - Optional Gemini: with a key set, a ✦ button in scout mode asks Gemini which kept view is best. Everything else runs offline and free.
 
+## Pose suggestions
+
+- Pose mode now picks poses that fit the place it sees around the person (street, sea, sunset, café, flowers, buildings, pets...) and the light. The top 3 are marked ✨ on the pose card; swipe the card (or tap ›) for more.
+- 21 poses, including back views (arms open, walk away and look back), sitting, leaning on a wall, hands in pockets, holding a cup and squatting. The outline, match ring and stand-here box work for all of them; sitting poses keep their feet at the bottom of the box.
+
 ## Get the app
 
 Every push to `main` builds a debug APK and attaches it to the **Latest build** release. On your phone, open the repo's **Releases** page, download `camera-man.apk`, and install it (allow "install unknown apps" when asked).

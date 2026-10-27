@@ -22,7 +22,7 @@ enum class ControlIcon(val meaning: String) {
     Filter("Color filters"),
     Grid("Grid lines on or off"),
     Scan("Scout: walk around; the app keeps the 3 best views (tap one to find it again)"),
-    Pose("Pose guide on or off"),
+    Pose("Pose: suggests poses for the place (✨); swipe the pose card for more"),
     Flip("Switch front and back camera")
 }
 
